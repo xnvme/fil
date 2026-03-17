@@ -20,7 +20,6 @@
 #include <cufile.h>
 
 #define GPU_WARPSIZE 32
-#define MAX_BATCH_IOS 128
 
 int
 sil_cpu_submit(struct sil_iter *iter)
