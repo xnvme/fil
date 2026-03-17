@@ -275,7 +275,11 @@ sil_file_submit(struct sil_iter *iter)
 	char *prefix, *path;
 	int fd, flags;
 	ssize_t err, bytes_read;
-	bool is_gds;
+	bool is_gds = strcmp(iter->opts->backend, "gds") == 0;
+	flags = O_RDONLY;
+	if (is_gds || !iter->opts->buffered) {
+		flags |= O_DIRECT;
+	}
 
 	for (uint32_t i = 0; i < iter->opts->batch_size; i++) {
 		clock_gettime(CLOCK_MONOTONIC_RAW, &start);
@@ -303,17 +307,10 @@ sil_file_submit(struct sil_iter *iter)
 		strcat(path, "/");
 		strcat(path, file.name);
 
-		is_gds = strcmp(iter->opts->backend, "gds") == 0;
-
 		nbytes = file.size;
-		if (!is_gds && iter->opts->buffered) {
-			flags = O_RDONLY;
-		} else {
-			if (!is_gds && !iter->opts->buffered) {
-				// POSIX O_DIRECT requires aligned nbytes
-				nbytes = (1 + ((file.size - 1) / xal_blksize)) * xal_blksize;
-			}
-			flags = O_RDONLY | O_DIRECT;
+		if (!is_gds && !iter->opts->buffered) {
+			// POSIX O_DIRECT requires aligned nbytes
+			nbytes = (1 + ((file.size - 1) / xal_blksize)) * xal_blksize;
 		}
 
 		fd = open(path, flags);
