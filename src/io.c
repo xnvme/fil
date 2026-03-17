@@ -21,6 +21,9 @@
 
 #define GPU_WARPSIZE 32
 
+#define ELAPSED(s, e) \
+	((double)((e).tv_sec - (s).tv_sec) + (double)((e).tv_nsec - (s).tv_nsec) / 1e9)
+
 int
 sil_cpu_submit(struct sil_iter *iter)
 {
@@ -76,8 +79,7 @@ sil_cpu_submit(struct sil_iter *iter)
 			iter->stats->bytes += file.size;
 		}
 		clock_gettime(CLOCK_MONOTONIC_RAW, &end);
-		iter->stats->prep_time += (double)(end.tv_sec - start.tv_sec) +
-					  (double)(end.tv_nsec - start.tv_nsec) / 1000000000.f;
+		iter->stats->prep_time += ELAPSED(start, end);
 
 		clock_gettime(CLOCK_MONOTONIC_RAW, &start);
 		err = xnvme_io_range_submit(device->queue, XNVME_SPEC_NVM_OPC_READ,
@@ -85,8 +87,7 @@ sil_cpu_submit(struct sil_iter *iter)
 					    iter->opts->nlb, iter->opts->nbytes, device->buffers,
 					    device->n_buffers);
 		clock_gettime(CLOCK_MONOTONIC_RAW, &end);
-		iter->stats->io_time += (double)(end.tv_sec - start.tv_sec) +
-					(double)(end.tv_nsec - start.tv_nsec) / 1000000000.f;
+		iter->stats->io_time += ELAPSED(start, end);
 		if (err) {
 			fprintf(stderr, "IO failed: %d\n", err);
 			return err;
@@ -183,8 +184,7 @@ sil_gpu_submit(struct sil_iter *iter)
 		}
 	}
 	clock_gettime(CLOCK_MONOTONIC_RAW, &end);
-	iter->stats->prep_time += (double)(end.tv_sec - start.tv_sec) +
-				  (double)(end.tv_nsec - start.tv_nsec) / 1000000000.f;
+	iter->stats->prep_time += ELAPSED(start, end);
 	iter->stats->io += n_io;
 	iter->gpu_io->n_io = n_io;
 
@@ -203,8 +203,7 @@ sil_gpu_submit(struct sil_iter *iter)
 		return err;
 	}
 	clock_gettime(CLOCK_MONOTONIC_RAW, &end);
-	iter->stats->io_time += (double)(end.tv_sec - start.tv_sec) +
-				(double)(end.tv_nsec - start.tv_nsec) / 1000000000.f;
+	iter->stats->io_time += ELAPSED(start, end);
 	return 0;
 }
 
@@ -337,8 +336,7 @@ sil_file_submit(struct sil_iter *iter)
 		}
 
 		clock_gettime(CLOCK_MONOTONIC_RAW, &end);
-		iter->stats->prep_time += (double)(end.tv_sec - start.tv_sec) +
-					  (double)(end.tv_nsec - start.tv_nsec) / 1000000000.f;
+		iter->stats->prep_time += ELAPSED(start, end);
 
 		clock_gettime(CLOCK_MONOTONIC_RAW, &start);
 		bytes_read = 0;
@@ -384,8 +382,7 @@ sil_file_submit(struct sil_iter *iter)
 			}
 		}
 		clock_gettime(CLOCK_MONOTONIC_RAW, &end);
-		iter->stats->io_time += (double)(end.tv_sec - start.tv_sec) +
-					(double)(end.tv_nsec - start.tv_nsec) / 1000000000.f;
+		iter->stats->io_time += ELAPSED(start, end);
 		close(fd);
 	}
 	return 0;
@@ -462,8 +459,7 @@ sil_gds_async_submit(struct sil_iter *iter)
 	}
 
 	clock_gettime(CLOCK_MONOTONIC_RAW, &end);
-	iter->stats->prep_time += (double)(end.tv_sec - start.tv_sec) +
-				  (double)(end.tv_nsec - start.tv_nsec) / 1000000000.f;
+	iter->stats->prep_time += ELAPSED(start, end);
 
 	clock_gettime(CLOCK_MONOTONIC_RAW, &start);
 	for (uint32_t i = 0; i < iter->opts->batch_size; i++) {
@@ -486,8 +482,7 @@ sil_gds_async_submit(struct sil_iter *iter)
 		}
 	}
 	clock_gettime(CLOCK_MONOTONIC_RAW, &end);
-	iter->stats->io_time += (double)(end.tv_sec - start.tv_sec) +
-				(double)(end.tv_nsec - start.tv_nsec) / 1000000000.f;
+	iter->stats->io_time += ELAPSED(start, end);
 
 teardown:
 	for (uint32_t i = 0; i < iter->opts->batch_size; i++) {
