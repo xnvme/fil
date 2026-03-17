@@ -449,7 +449,7 @@ sil_gds_async_submit(struct sil_iter *iter)
 		status = cuFileReadAsync(gds_io->handle[i], buffer, &gds_io->expected[i], &offset, &offset, &gds_io->actual[i],
 				    gds_io->streams[i]);
 		if (status.err != CU_FILE_SUCCESS) {
-			fprintf(stderr, "Could not register file, err: %d\n", status.err);
+			fprintf(stderr, "cuFileReadAsync failed, err: %d\n", status.err);
 			err = status.err;
 			goto teardown;
 		}
