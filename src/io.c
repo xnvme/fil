@@ -24,6 +24,127 @@
 #define ELAPSED(s, e) \
 	((double)((e).tv_sec - (s).tv_sec) + (double)((e).tv_nsec - (s).tv_nsec) / 1e9)
 
+struct _range {
+	uint64_t slba;
+	uint64_t elba;
+	void *dbuf;
+};
+
+struct _work {
+	uint32_t opc;
+	uint32_t nlb;
+	uint64_t nbytes;
+
+	uint32_t n_ranges;
+	uint32_t cur_range;
+
+	struct _range *ranges;
+	uint32_t errors;
+};
+
+static int
+_submit(struct _work *work, struct xnvme_cmd_ctx *ctx)
+{
+	int err;
+
+	ctx->cmd.common.opcode = work->opc;
+	ctx->cmd.common.nsid = xnvme_dev_get_nsid(ctx->dev);
+	if (work->ranges[work->cur_range].slba >= work->ranges[work->cur_range].elba) {
+		work->cur_range += 1;
+	}
+	if (work->cur_range >= work->n_ranges) {
+		xnvme_queue_put_cmd_ctx(ctx->async.queue, ctx);
+		return 0;
+	}
+
+	ctx->cmd.nvm.slba = work->ranges[work->cur_range].slba;
+	ctx->cmd.nvm.nlb = work->nlb;
+
+retry:
+	err = xnvme_cmd_pass(ctx, work->ranges[work->cur_range].dbuf, work->nbytes, NULL, 0);
+	if (err == -EBUSY || err == -EAGAIN) {
+		xnvme_queue_poke(ctx->async.queue, 0);
+		goto retry;
+	}
+	if (err) {
+		printf("Failed to submit, err: %d\n", err);
+		xnvme_queue_put_cmd_ctx(ctx->async.queue, ctx);
+		return err;
+	}
+	work->ranges[work->cur_range].slba += (work->nlb + 1);
+	work->ranges[work->cur_range].dbuf =
+	    (uint8_t *)work->ranges[work->cur_range].dbuf + work->nbytes;
+	return 0;
+}
+
+static void
+_cb_fn(struct xnvme_cmd_ctx *ctx, void *cb_arg)
+{
+	struct _work *work = cb_arg;
+	if (xnvme_cmd_ctx_cpl_status(ctx)) {
+		xnvme_cmd_ctx_pr(ctx, XNVME_PR_DEF);
+		work->errors++;
+		xnvme_queue_put_cmd_ctx(ctx->async.queue, ctx);
+		return;
+	}
+
+	if (work->cur_range >= work->n_ranges) {
+		xnvme_queue_put_cmd_ctx(ctx->async.queue, ctx);
+		return;
+	}
+	_submit(work, ctx);
+}
+
+static int
+_io_range_submit(struct xnvme_queue *queue, uint32_t opc, uint64_t *slbas, uint64_t *elbas,
+		 uint32_t nlb, uint64_t nbytes, void **dbufs, uint32_t n_ranges)
+{
+	struct _work work = {0};
+	struct _range ranges[n_ranges];
+	struct _range *range;
+	uint32_t n_blocks;
+	int err, capacity;
+
+	capacity = xnvme_queue_get_capacity(queue);
+	work.nlb = nlb;
+	work.n_ranges = n_ranges;
+	work.nbytes = nbytes;
+	work.opc = opc;
+	work.ranges = ranges;
+
+	err = xnvme_queue_set_cb(queue, _cb_fn, &work);
+	if (err) {
+		printf("Failed to set queue callback, err: %d\n", err);
+		return err;
+	}
+
+	for (uint32_t i = 0; i < n_ranges; i++) {
+		range = &work.ranges[i];
+		range->slba = slbas[i];
+		range->elba = elbas[i];
+		range->dbuf = dbufs[i];
+		n_blocks = (range->elba - range->slba) + 1;
+		if (n_blocks % (nlb + 1) != 0) {
+			printf("n_blocks (%u) is not divisible by nlb + 1 (%u)\n", n_blocks,
+				    nlb + 1);
+			return -EINVAL;
+		}
+	}
+
+	for (int i = 0; i < capacity - 1; i++) {
+		struct xnvme_cmd_ctx *ctx = xnvme_queue_get_cmd_ctx(queue);
+		err = _submit(&work, ctx);
+		if (err) {
+			break;
+		}
+	}
+	xnvme_queue_drain(queue);
+	if (work.errors) {
+		return -EIO;
+	}
+	return err;
+}
+
 int
 sil_cpu_submit(struct sil_iter *iter)
 {
@@ -82,7 +203,7 @@ sil_cpu_submit(struct sil_iter *iter)
 		iter->stats->prep_time += ELAPSED(start, end);
 
 		clock_gettime(CLOCK_MONOTONIC_RAW, &start);
-		err = xnvme_io_range_submit(device->queue, XNVME_SPEC_NVM_OPC_READ,
+		err = _io_range_submit(device->queue, XNVME_SPEC_NVM_OPC_READ,
 					    device->cpu_io->slbas, device->cpu_io->elbas,
 					    iter->opts->nlb, iter->opts->nbytes, device->buffers,
 					    device->n_buffers);
