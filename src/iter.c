@@ -48,11 +48,10 @@ _xnvme_setup(struct sil_iter *iter, struct sil_dev *device, const char *uri)
 	} else if (strcmp(backend, "spdk") == 0) {
 		opts.be = "spdk";
 		iter->type = SIL_CPU;
-	} else if (strcmp(backend, "libnvm-cpu") == 0) {
-		opts.be = "bam";
+	} else if (strcmp(backend, "aisio-cpu") == 0) {
+		opts.be = "upcie";
 		iter->type = SIL_CPU;
-	} else if (strcmp(backend, "libnvm-gpu") == 0 || strcmp(backend, "aisio") == 0) {
-		opts.be = "bam";
+	} else if (strcmp(backend, "aisio-gpu") == 0) {
 		iter->type = SIL_GPU;
 	} else if (strcmp(backend, "posix") == 0) {
 		opts.be = "linux";
@@ -664,7 +663,7 @@ sil_opts_default()
 {
 	struct sil_opts opts = {.data_dir = "",
 				.mnt = "/mnt",
-				.backend = "aisio",
+				.backend = "aisio-cpu",
 				.nlb = 7,
 				.nbytes = 4096,
 				.gpu_nqueues = 128,

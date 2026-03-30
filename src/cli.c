@@ -22,17 +22,17 @@ print_help(const char *name)
 	fprintf(stderr, "\t --data-dir \t | \t A directory containing subdirectories with files\n");
 	fprintf(stderr, "\t \t \t | \t The data-dir should be a name of a directory, not a path\n");
 	fprintf(stderr, "\t \t \t | \t The name of the data-dir should be unique\n");
-	fprintf(stderr, "\t --backend \t | \t The backend to use for reading files (aisio "
-			"[default], posix or gds)\n");
+	fprintf(stderr, "\t --backend \t | \t The backend to use for reading files (aisio-cpu "
+			"[default], aisio-gpu, posix, gds)\n");
 	fprintf(stderr, "\t --mnt \t \t | \t The mountpoint of the drive (default = /mnt). Only "
 			"relevant for backends: 'posix' and 'gds'\n");
 	fprintf(stderr, "\t --nbytes \t | \t The number of bytes per I/O (default = 4096)\n");
 	fprintf(stderr,
 		"\t --nlb \t | \t The number of blocks per I/O (zero-indexed) (default = 7)\n");
 	fprintf(stderr, "\t --gpu-nqueues \t | \t The number of GPU queues to create (default = "
-			"128). Only relevant for backend: 'aisio'\n");
+			"128). Only relevant for backend: 'aisio-gpu'\n");
 	fprintf(stderr, "\t --gpu-tbsize \t | \t The size of a GPU threadblock (default = 64). "
-			"Only relevant for backend: 'aisio'\n");
+			"Only relevant for backend: 'aisio-gpu'\n");
 	fprintf(stderr, "\t --queue-depth \t | \t The NVMe queue depth (default = 1024)\n");
 	fprintf(stderr,
 		"\t --batch-size \t | \t The number of files to read per batch (default = 1)\n");
