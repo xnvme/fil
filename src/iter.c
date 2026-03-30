@@ -446,19 +446,6 @@ _alloc(struct sil_iter *iter, uint32_t n_buffers)
 	}
 	memset(iter->data, 0, sizeof(struct sil_data));
 
-	iter->data->io_pattern = malloc(sizeof(uint32_t) * iter->opts->batch_size);
-	if (!iter->data->io_pattern) {
-		err = errno;
-		fprintf(stderr, "Could not allocate io_pattern: %d\n", err);
-		return err;
-	}
-	for (uint32_t i = 0; i < iter->opts->batch_size; i++) {
-		iter->data->io_pattern[i] = i;
-	}
-	if (iter->opts->random) {
-		SIL_SHUFFLE(iter->data->io_pattern, uint32_t, iter->opts->batch_size, uint32_t);
-	}
-
 	return 0;
 }
 
@@ -663,30 +650,9 @@ sil_init(struct sil_iter **iter, char **dev_uris, uint32_t n_devs, struct sil_op
 			    uint64_t);
 
 	} else {
-		_iter->buffer_size = _iter->opts->batch_size * _iter->opts->nbytes / _iter->n_devs;
-		err = _alloc(_iter, _iter->n_devs);
-		if (err) {
-			sil_term(_iter);
-			return err;
-		}
-		switch (_iter->type) {
-		case SIL_GPU:
-			_iter->io_fn = sil_gpu_synthetic;
-			break;
-		case SIL_CPU:
-			if (_iter->opts->random) {
-				fprintf(stderr, "Shuffling IOs before submission is not supported "
-						"with CPU-based backend");
-				return EINVAL;
-			}
-			_iter->io_fn = sil_cpu_synthetic;
-			break;
-		case SIL_FILE:
-			fprintf(stderr, "%s doesn't support synthetic workloads\n",
-				_iter->opts->backend);
-			sil_term(_iter);
-			return EINVAL;
-		}
+		fprintf(stderr, "data_dir is required\n");
+		sil_term(_iter);
+		return EINVAL;
 	}
 
 	(*iter) = _iter;

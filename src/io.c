@@ -97,49 +97,6 @@ sil_cpu_submit(struct sil_iter *iter)
 }
 
 int
-sil_cpu_synthetic(struct sil_iter *iter)
-{
-	struct timespec start, end;
-	int err;
-
-	clock_gettime(CLOCK_MONOTONIC_RAW, &start);
-	for (uint32_t i = 0; i < iter->n_devs; i++) {
-		clock_gettime(CLOCK_MONOTONIC_RAW, &start);
-		struct sil_dev *device = iter->devs[i];
-		for (uint32_t j = 0; j < device->n_buffers; j++) {
-			iter->output->buf_len[j + i * device->n_buffers] +=
-			    iter->opts->batch_size * iter->opts->nbytes;
-			iter->output->labels[j + i * device->n_buffers] = 0;
-			device->cpu_io->slbas[j] = 0;
-			device->cpu_io->elbas[j] =
-			    (iter->opts->batch_size * (iter->opts->nlb + 1)) - 1;
-
-			iter->stats->bytes += iter->opts->batch_size * iter->opts->nbytes;
-			iter->stats->io += iter->opts->batch_size;
-		}
-
-		clock_gettime(CLOCK_MONOTONIC_RAW, &end);
-		iter->stats->prep_time += (double)(end.tv_sec - start.tv_sec) +
-					  (double)(end.tv_nsec - start.tv_nsec) / 1000000000.f;
-
-		clock_gettime(CLOCK_MONOTONIC_RAW, &start);
-		err = xnvme_io_range_submit(device->queue, XNVME_SPEC_NVM_OPC_READ,
-					    device->cpu_io->slbas, device->cpu_io->elbas,
-					    iter->opts->nlb, iter->opts->nbytes, device->buffers,
-					    device->n_buffers);
-		clock_gettime(CLOCK_MONOTONIC_RAW, &end);
-		iter->stats->io_time += (double)(end.tv_sec - start.tv_sec) +
-					(double)(end.tv_nsec - start.tv_nsec) / 1000000000.f;
-		if (err) {
-			fprintf(stderr, "IO failed: %d\n", err);
-			return err;
-		}
-	}
-
-	return 0;
-}
-
-int
 sil_gpu_submit(struct sil_iter *iter)
 {
 	struct sil_entry entry;
@@ -204,58 +161,6 @@ sil_gpu_submit(struct sil_iter *iter)
 	}
 	clock_gettime(CLOCK_MONOTONIC_RAW, &end);
 	iter->stats->io_time += ELAPSED(start, end);
-	return 0;
-}
-
-int
-sil_gpu_synthetic(struct sil_iter *iter)
-{
-	uint32_t buf_id, dev_id = 0;
-	void *buffer;
-	struct timespec start, end;
-	int err;
-
-	clock_gettime(CLOCK_MONOTONIC_RAW, &start);
-	for (uint32_t i = 0; i < iter->opts->batch_size; i++) {
-		if (i % GPU_WARPSIZE == 0) {
-			dev_id++;
-		}
-		struct sil_dev *device = iter->devs[dev_id % iter->n_devs];
-		buf_id = device->buf++ % device->n_buffers;
-		buffer = device->buffers[buf_id];
-		iter->output->buf_len[buf_id + (dev_id % iter->n_devs) * device->n_buffers] +=
-		    iter->opts->nbytes;
-		iter->output->labels[buf_id + (dev_id % iter->n_devs) * device->n_buffers] = 0;
-		iter->gpu_io->offsets[iter->data->io_pattern[i]] = i * (iter->opts->nlb + 1);
-		iter->gpu_io->slbas[iter->data->io_pattern[i]] = i * (iter->opts->nlb + 1);
-		iter->gpu_io->buffers[iter->data->io_pattern[i]] = buffer;
-		iter->gpu_io->devs[iter->data->io_pattern[i]] = device->dev;
-	}
-	clock_gettime(CLOCK_MONOTONIC_RAW, &end);
-	iter->stats->prep_time += (double)(end.tv_sec - start.tv_sec) +
-				  (double)(end.tv_nsec - start.tv_nsec) / 1000000000.f;
-	iter->stats->bytes += iter->opts->batch_size * iter->opts->nbytes;
-	iter->stats->io += iter->opts->batch_size;
-	iter->gpu_io->n_io = iter->opts->batch_size;
-
-	clock_gettime(CLOCK_MONOTONIC_RAW, &start);
-	err = xnvme_gpu_io_submit((iter->gpu_io->n_io + iter->opts->gpu_tbsize - 1) /
-				      iter->opts->gpu_tbsize,
-				  iter->opts->gpu_tbsize, XNVME_SPEC_NVM_OPC_READ, iter->opts->nlb,
-				  iter->opts->nbytes, iter->gpu_io);
-	if (err) {
-		fprintf(stderr, "Could not launch kernel: %d\n", err);
-		return err;
-	}
-
-	err = xnvme_gpu_sync();
-	if (err) {
-		fprintf(stderr, "Error synchronizing kernels: %d\n", err);
-		return err;
-	}
-	clock_gettime(CLOCK_MONOTONIC_RAW, &end);
-	iter->stats->io_time += (double)(end.tv_sec - start.tv_sec) +
-				(double)(end.tv_nsec - start.tv_nsec) / 1000000000.f;
 	return 0;
 }
 
