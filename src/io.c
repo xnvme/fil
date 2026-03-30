@@ -12,6 +12,7 @@
 #include <libsil.h>
 #include <sil_io.h>
 #include <sil_iter.h>
+#include <sil_util.h>
 
 #include <libxal.h>
 #include <libxnvme.h>
@@ -218,71 +219,9 @@ sil_cpu_submit(struct sil_iter *iter)
 }
 
 int
-sil_gpu_submit(struct sil_iter *iter)
+sil_gpu_submit(struct sil_iter *SIL_UNUSED(iter))
 {
-	struct sil_entry entry;
-	struct xal_inode dir;
-	struct xal_inode file;
-	struct xal_extent extent;
-	uint64_t nblocks, nbytes, blocksize, slba, offset, n_io = 0;
-	uint32_t dev_id, buf_id, xal_blksize;
-	void *buffer;
-	struct timespec start, end;
-	int err;
-
-	clock_gettime(CLOCK_MONOTONIC_RAW, &start);
-	for (uint32_t i = 0; i < iter->opts->batch_size; i++) {
-		dev_id = i % iter->n_devs;
-		struct sil_dev *device = iter->devs[dev_id];
-		buf_id = device->buf++ % device->n_buffers;
-		buffer = device->buffers[buf_id];
-		blocksize = xnvme_dev_get_geo(device->dev)->lba_nbytes;
-		xal_blksize = xal_get_sb_blocksize(device->xal);
-		offset = 0;
-
-		entry = iter->data->entries[iter->data->index++ % iter->data->n_entries];
-		dir = device->root_inode->content.dentries.inodes[entry.dir];
-		file = dir.content.dentries.inodes[entry.file];
-		iter->output->buf_len[buf_id + dev_id * device->n_buffers] = file.size;
-		iter->output->labels[buf_id + dev_id * device->n_buffers] = entry.dir;
-		iter->stats->bytes += file.size;
-		for (uint32_t j = 0; j < file.content.extents.count; j++) {
-			extent = file.content.extents.extent[j];
-			slba = xal_fsbno_offset(device->xal, extent.start_block) / blocksize;
-			nbytes = extent.nblocks * xal_blksize;
-			nblocks = nbytes / blocksize;
-			for (uint64_t k = 0; k < nblocks / (iter->opts->nlb + 1); k++) {
-				iter->gpu_io->offsets[n_io] = offset * (iter->opts->nlb + 1);
-				iter->gpu_io->slbas[n_io] = slba + k * (iter->opts->nlb + 1);
-				iter->gpu_io->buffers[n_io] = buffer;
-				iter->gpu_io->devs[n_io] = device->dev;
-				n_io++;
-				offset++;
-			}
-		}
-	}
-	clock_gettime(CLOCK_MONOTONIC_RAW, &end);
-	iter->stats->prep_time += ELAPSED(start, end);
-	iter->stats->io += n_io;
-	iter->gpu_io->n_io = n_io;
-
-	clock_gettime(CLOCK_MONOTONIC_RAW, &start);
-	err = xnvme_gpu_io_submit((n_io + iter->opts->gpu_tbsize - 1) / iter->opts->gpu_tbsize,
-				  iter->opts->gpu_tbsize, XNVME_SPEC_NVM_OPC_READ, iter->opts->nlb,
-				  iter->opts->nbytes, iter->gpu_io);
-	if (err) {
-		fprintf(stderr, "Could not launch kernel: %d\n", err);
-		return err;
-	}
-
-	err = xnvme_gpu_sync();
-	if (err) {
-		fprintf(stderr, "Error synchronizing kernels: %d\n", err);
-		return err;
-	}
-	clock_gettime(CLOCK_MONOTONIC_RAW, &end);
-	iter->stats->io_time += ELAPSED(start, end);
-	return 0;
+	return ENOSYS;
 }
 
 int

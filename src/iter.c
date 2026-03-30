@@ -70,6 +70,10 @@ _xnvme_setup(struct sil_iter *iter, struct sil_dev *device, const char *uri)
 		return EINVAL;
 	}
 
+	if (iter->type == SIL_GPU) {
+		return -ENOSYS;
+	}
+
 	dev = xnvme_dev_open(uri, &opts);
 	if (!dev) {
 		err = errno;
@@ -84,15 +88,7 @@ _xnvme_setup(struct sil_iter *iter, struct sil_dev *device, const char *uri)
 		return err;
 	}
 
-	if (iter->type == SIL_GPU) {
-		err =
-		    xnvme_gpu_create_queues(dev, iter->opts->queue_depth, iter->opts->gpu_nqueues);
-		if (err) {
-			xnvme_dev_close(dev);
-			fprintf(stderr, "xnvme_gpu_create_queues(): %d\n", err);
-			return err;
-		}
-	} else if (iter->type == SIL_CPU) {
+	if (iter->type == SIL_CPU) {
 		err = xnvme_queue_init(dev, iter->opts->queue_depth, 0, &device->queue);
 		if (err) {
 			xnvme_dev_close(dev);
@@ -315,9 +311,7 @@ _alloc(struct sil_iter *iter, uint32_t n_buffers)
 		for (uint32_t j = 0; j < device->n_buffers; j++) {
 			switch (iter->type) {
 			case SIL_GPU:
-				device->buffers[j] =
-				    xnvme_gpu_alloc(device->dev, iter->buffer_size);
-				break;
+				return -ENOSYS;
 			case SIL_CPU:
 				device->buffers[j] =
 				    xnvme_buf_alloc(device->dev, iter->buffer_size);
@@ -429,15 +423,6 @@ _alloc(struct sil_iter *iter, uint32_t n_buffers)
 		}
 	}
 
-	if (iter->type == SIL_GPU) {
-		err = xnvme_gpu_io_alloc(&iter->gpu_io, (iter->buffer_size / iter->opts->nbytes) *
-							    iter->output->n_buffers);
-		if (err) {
-			fprintf(stderr, "Could not allocate IO struct: %d\n", err);
-			return err;
-		}
-	}
-
 	iter->data = malloc(sizeof(struct sil_data));
 	if (!iter->data) {
 		err = errno;
@@ -456,10 +441,6 @@ sil_term(struct sil_iter *iter)
 		struct sil_dev *device = iter->devs[i];
 		switch (iter->type) {
 		case SIL_GPU:
-			for (uint32_t j = 0; j < device->n_buffers; j++) {
-				xnvme_gpu_free(device->dev, device->buffers[j]);
-			}
-			xnvme_gpu_delete_queues(device->dev);
 			break;
 		case SIL_CPU:
 			for (uint32_t j = 0; j < device->n_buffers; j++) {
@@ -496,9 +477,6 @@ sil_term(struct sil_iter *iter)
 			cudaStreamDestroy(iter->gds_io->streams[i]);
 		}
 		free(iter->gds_io->streams);
-	}
-	if (iter->gpu_io) {
-		xnvme_gpu_io_free(iter->gpu_io);
 	}
 	if (iter->data) {
 		free(iter->data->entries);
