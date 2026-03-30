@@ -13,7 +13,6 @@ struct sil_entry {
 
 struct sil_data {
 	struct sil_entry *entries;
-	uint32_t *io_pattern;
 	uint64_t n_entries;
 	uint64_t index;
 };
@@ -41,13 +40,7 @@ int
 sil_cpu_submit(struct sil_iter *iter);
 
 int
-sil_cpu_synthetic(struct sil_iter *iter);
-
-int
 sil_gpu_submit(struct sil_iter *iter);
-
-int
-sil_gpu_synthetic(struct sil_iter *iter);
 
 int
 sil_file_submit(struct sil_iter *iter);
