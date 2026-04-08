@@ -36,12 +36,12 @@ name (not path) and must be unique across the device.
 
 ## CLI
 
-The `fil` CLI runs benchmarks and reports throughput metrics. Progress is printed
+The `filperf` CLI runs benchmarks and reports throughput metrics. Progress is printed
 as CSV every second: elapsed time, batches completed, IOPS, and MiB/s. Multiple
 devices can be specified as a comma-separated list.
 
 ```
-fil <device-uri>[,<device-uri>,...] [options]
+filperf <device-uri>[,<device-uri>,...] [options]
 ```
 
 ### Options
@@ -69,7 +69,7 @@ filesystem. Requires a PCIe address as the device URI. All 10 batches complete i
 under a second here, so only one CSV line is printed.
 
 ```
-$ fil 0000:01:00.0 --batches 10 --batch-size 1024 --backend aisio-cpu --data-dir imagenetish --summary
+$ filperf 0000:01:00.0 --batches 10 --batch-size 1024 --backend aisio-cpu --data-dir imagenetish --summary
 Time, Batches, IOPS, MiB/s
 0.252730, 10, 1132503.077717, 4343.994633
 
@@ -92,7 +92,7 @@ Dataset stats:
 For these file-level backends, IOPS equals File/s since each file is a single I/O.
 
 ```
-$ fil /dev/nvme0n1 --batches 10 --batch-size 1024 --backend posix --mnt /mnt/datasets --data-dir imagenetish --summary
+$ filperf /dev/nvme0n1 --batches 10 --batch-size 1024 --backend posix --mnt /mnt/datasets --data-dir imagenetish --summary
 Time, Batches, IOPS, MiB/s
 1.278807, 3, 2402.239796, 256.833337
 2.331972, 6, 2916.959640, 312.977377
@@ -113,7 +113,7 @@ Dataset stats:
 ```
 
 ```
-$ fil /dev/nvme0n1 --batches 10 --batch-size 1024 --backend gds --mnt /mnt/datasets --data-dir imagenetish --summary
+$ filperf /dev/nvme0n1 --batches 10 --batch-size 1024 --backend gds --mnt /mnt/datasets --data-dir imagenetish --summary
 Time, Batches, IOPS, MiB/s
 1.255441, 4, 3262.598873, 348.563276
 2.413140, 8, 3538.085634, 381.345474
