@@ -57,7 +57,7 @@ fil_library = library('fil',
   install: true
 )
 
-fil_cli = executable('fil',
+fil_cli = executable('filperf',
   sources: 'src/cli.c',
   link_with: fil_library,
   include_directories: include_dirs,
