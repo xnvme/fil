@@ -3,5 +3,5 @@ requires = ["setuptools", "numpy"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "sil"
+name = "fil"
 version = "0.1.0"

@@ -1,34 +1,34 @@
-#ifndef __SIL_IO_H
-#define __SIL_IO_H
+#ifndef __FIL_IO_H
+#define __FIL_IO_H
 
 #include <cuda_runtime.h>
 #include <cufile.h>
 #include <limits.h>
 #include <stdint.h>
 
-struct sil_entry {
+struct fil_entry {
 	uint64_t dir;
 	uint64_t file;
 };
 
-struct sil_data {
-	struct sil_entry *entries;
+struct fil_data {
+	struct fil_entry *entries;
 	uint64_t n_entries;
 	uint64_t index;
 };
 
-struct sil_cpu_io {
+struct fil_cpu_io {
 	uint64_t *slbas;
 	uint64_t *elbas;
 };
 
-struct sil_file_io {
+struct fil_file_io {
 	char prefix[PATH_MAX];
 	char path[PATH_MAX];
 	void *buffer;
 };
 
-struct sil_gds_io {
+struct fil_gds_io {
 	CUfileDescr_t *descr;
 	CUfileHandle_t *handle;
 	size_t *expected;
@@ -37,15 +37,15 @@ struct sil_gds_io {
 };
 
 int
-sil_cpu_submit(struct sil_iter *iter);
+fil_cpu_submit(struct fil_iter *iter);
 
 int
-sil_gpu_submit(struct sil_iter *iter);
+fil_gpu_submit(struct fil_iter *iter);
 
 int
-sil_file_submit(struct sil_iter *iter);
+fil_file_submit(struct fil_iter *iter);
 
 int
-sil_gds_async_submit(struct sil_iter *iter);
+fil_gds_async_submit(struct fil_iter *iter);
 
 #endif

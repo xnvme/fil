@@ -2,10 +2,10 @@
 #include <stdint.h>
 #include <string.h>
 
-#include <libsil.h>
-#include <sil_io.h>
-#include <sil_iter.h>
-#include <sil_util.h>
+#include <libfil.h>
+#include <fil_io.h>
+#include <fil_iter.h>
+#include <fil_util.h>
 
 #include <cuda_runtime.h>
 #include <cufile.h>
@@ -27,7 +27,7 @@ inode_cmp(const void *a, const void *b)
 }
 
 static int
-_xnvme_setup(struct sil_iter *iter, struct sil_dev *device, const char *uri)
+_xnvme_setup(struct fil_iter *iter, struct fil_dev *device, const char *uri)
 {
 	const char *backend = iter->opts->backend;
 	struct xnvme_opts opts = xnvme_opts_default();
@@ -39,26 +39,26 @@ _xnvme_setup(struct sil_iter *iter, struct sil_dev *device, const char *uri)
 		opts.be = "linux";
 		opts.async = "io_uring";
 		opts.direct = 0;
-		iter->type = SIL_CPU;
+		iter->type = FIL_CPU;
 	} else if (strcmp(backend, "io_uring_direct") == 0) {
 		opts.be = "linux";
 		opts.async = "io_uring";
 		opts.direct = 1;
-		iter->type = SIL_CPU;
+		iter->type = FIL_CPU;
 	} else if (strcmp(backend, "spdk") == 0) {
 		opts.be = "spdk";
-		iter->type = SIL_CPU;
+		iter->type = FIL_CPU;
 	} else if (strcmp(backend, "aisio-cpu") == 0) {
 		opts.be = "upcie";
-		iter->type = SIL_CPU;
+		iter->type = FIL_CPU;
 	} else if (strcmp(backend, "aisio-gpu") == 0) {
-		iter->type = SIL_GPU;
+		iter->type = FIL_GPU;
 	} else if (strcmp(backend, "posix") == 0) {
 		opts.be = "linux";
-		iter->type = SIL_FILE;
+		iter->type = FIL_FILE;
 	} else if (strcmp(backend, "gds") == 0) {
 		opts.be = "linux";
-		iter->type = SIL_FILE;
+		iter->type = FIL_FILE;
 		status = cuFileDriverOpen();
 		if (status.err != CU_FILE_SUCCESS) {
 			fprintf(stderr, "Could not open cuFile driver: %d\n", status.err);
@@ -69,7 +69,7 @@ _xnvme_setup(struct sil_iter *iter, struct sil_dev *device, const char *uri)
 		return EINVAL;
 	}
 
-	if (iter->type == SIL_GPU) {
+	if (iter->type == FIL_GPU) {
 		return -ENOSYS;
 	}
 
@@ -87,7 +87,7 @@ _xnvme_setup(struct sil_iter *iter, struct sil_dev *device, const char *uri)
 		return err;
 	}
 
-	if (iter->type == SIL_CPU) {
+	if (iter->type == FIL_CPU) {
 		err = xnvme_queue_init(dev, iter->opts->queue_depth, 0, &device->queue);
 		if (err) {
 			xnvme_dev_close(dev);
@@ -101,10 +101,10 @@ _xnvme_setup(struct sil_iter *iter, struct sil_dev *device, const char *uri)
 }
 
 static int
-find_buffer_size(struct xal *SIL_UNUSED(xal), struct xal_inode *inode, void *cb_args,
-		 int SIL_UNUSED(level))
+find_buffer_size(struct xal *FIL_UNUSED(xal), struct xal_inode *inode, void *cb_args,
+		 int FIL_UNUSED(level))
 {
-	struct sil_stats *stats = (struct sil_stats *)cb_args;
+	struct fil_stats *stats = (struct fil_stats *)cb_args;
 
 	if (xal_inode_is_file(inode)) {
 		stats->n_files++;
@@ -117,10 +117,10 @@ find_buffer_size(struct xal *SIL_UNUSED(xal), struct xal_inode *inode, void *cb_
 }
 
 static int
-find_data_dir(struct xal *SIL_UNUSED(xal), struct xal_inode *inode, void *cb_args,
-	      int SIL_UNUSED(level))
+find_data_dir(struct xal *FIL_UNUSED(xal), struct xal_inode *inode, void *cb_args,
+	      int FIL_UNUSED(level))
 {
-	struct sil_dev *dev = (struct sil_dev *)cb_args;
+	struct fil_dev *dev = (struct fil_dev *)cb_args;
 
 	if (strcmp(dev->data_dir, inode->name) == 0) {
 		dev->root_inode = inode;
@@ -142,10 +142,10 @@ path_prepend(char *path, struct xal_inode *node)
 }
 
 static void
-_find_prefix(struct sil_iter *iter)
+_find_prefix(struct fil_iter *iter)
 {
 	char *prefix;
-	struct sil_dev *device;
+	struct fil_dev *device;
 	for (uint32_t i = 0; i < iter->n_devs; i++) {
 		device = iter->devs[i];
 		prefix = device->file_io->prefix;
@@ -155,7 +155,7 @@ _find_prefix(struct sil_iter *iter)
 }
 
 static int
-_xal_setup(struct sil_iter *iter, struct sil_dev *device)
+_xal_setup(struct fil_iter *iter, struct fil_dev *device)
 {
 	struct xal *xal;
 	struct xal_opts xal_opts = {0};
@@ -230,9 +230,9 @@ _xal_setup(struct sil_iter *iter, struct sil_dev *device)
 }
 
 static int
-_create_entries(struct sil_iter *iter)
+_create_entries(struct fil_iter *iter)
 {
-	struct sil_entry *entries;
+	struct fil_entry *entries;
 	struct xal_dentries root_dentries = iter->devs[0]->root_inode->content.dentries;
 	uint64_t n_entries = 0;
 	int err;
@@ -242,7 +242,7 @@ _create_entries(struct sil_iter *iter)
 		n_entries += root_dentries.inodes[i].content.dentries.count;
 	}
 
-	entries = malloc(sizeof(struct sil_entry) * n_entries);
+	entries = malloc(sizeof(struct fil_entry) * n_entries);
 	if (!entries) {
 		err = errno;
 		fprintf(stderr, "Could not allocate entries: %d\n", err);
@@ -265,10 +265,10 @@ _create_entries(struct sil_iter *iter)
 }
 
 static int
-_alloc(struct sil_iter *iter, uint32_t n_buffers)
+_alloc(struct fil_iter *iter, uint32_t n_buffers)
 {
 	int err;
-	iter->output = malloc(sizeof(struct sil_output));
+	iter->output = malloc(sizeof(struct fil_output));
 	if (!iter->output) {
 		err = errno;
 		fprintf(stderr, "Could not allocate output struct: %d\n", err);
@@ -298,7 +298,7 @@ _alloc(struct sil_iter *iter, uint32_t n_buffers)
 	memset(iter->output->buf_len, 0, sizeof(uint64_t) * iter->output->n_buffers);
 
 	for (uint32_t i = 0; i < iter->n_devs; i++) {
-		struct sil_dev *device = iter->devs[i];
+		struct fil_dev *device = iter->devs[i];
 		device->n_buffers = iter->output->n_buffers / iter->n_devs;
 		device->buf = 0;
 		device->buffers = malloc(sizeof(void *) * device->n_buffers);
@@ -309,13 +309,13 @@ _alloc(struct sil_iter *iter, uint32_t n_buffers)
 		}
 		for (uint32_t j = 0; j < device->n_buffers; j++) {
 			switch (iter->type) {
-			case SIL_GPU:
+			case FIL_GPU:
 				return -ENOSYS;
-			case SIL_CPU:
+			case FIL_CPU:
 				device->buffers[j] =
 				    xnvme_buf_alloc(device->dev, iter->buffer_size);
 				break;
-			case SIL_FILE:
+			case FIL_FILE:
 				err = cudaMalloc(&device->buffers[j], iter->buffer_size);
 				if (err) {
 					fprintf(stderr, "Could not allocate buffers[%d]: %d\n", i,
@@ -332,8 +332,8 @@ _alloc(struct sil_iter *iter, uint32_t n_buffers)
 			iter->output->buffers[j + i * device->n_buffers] = device->buffers[j];
 		}
 
-		if (iter->type == SIL_CPU) {
-			device->cpu_io = malloc(sizeof(struct sil_cpu_io));
+		if (iter->type == FIL_CPU) {
+			device->cpu_io = malloc(sizeof(struct fil_cpu_io));
 			if (!device->cpu_io) {
 				err = errno;
 				fprintf(stderr, "Could not allocate IO struct: %d\n", err);
@@ -353,8 +353,8 @@ _alloc(struct sil_iter *iter, uint32_t n_buffers)
 				fprintf(stderr, "Could not allocate array for elbas: %d\n", err);
 				return err;
 			}
-		} else if (iter->type == SIL_FILE) {
-			device->file_io = malloc(sizeof(struct sil_file_io));
+		} else if (iter->type == FIL_FILE) {
+			device->file_io = malloc(sizeof(struct fil_file_io));
 			if (!device->file_io) {
 				err = errno;
 				fprintf(stderr, "Could not allocate IO struct: %d\n", err);
@@ -370,7 +370,7 @@ _alloc(struct sil_iter *iter, uint32_t n_buffers)
 	}
 
 	if (iter->opts->async) {
-		iter->gds_io = malloc(sizeof(struct sil_gds_io));
+		iter->gds_io = malloc(sizeof(struct fil_gds_io));
 		if (!iter->gds_io) {
 			err = errno;
 			fprintf(stderr, "Could not allocate GDS IO struct: %d\n", err);
@@ -422,32 +422,32 @@ _alloc(struct sil_iter *iter, uint32_t n_buffers)
 		}
 	}
 
-	iter->data = malloc(sizeof(struct sil_data));
+	iter->data = malloc(sizeof(struct fil_data));
 	if (!iter->data) {
 		err = errno;
 		fprintf(stderr, "Could not allocate data: %d\n", err);
 		return err;
 	}
-	memset(iter->data, 0, sizeof(struct sil_data));
+	memset(iter->data, 0, sizeof(struct fil_data));
 
 	return 0;
 }
 
 void
-sil_term(struct sil_iter *iter)
+fil_term(struct fil_iter *iter)
 {
 	for (uint32_t i = 0; i < iter->n_devs; i++) {
-		struct sil_dev *device = iter->devs[i];
+		struct fil_dev *device = iter->devs[i];
 		switch (iter->type) {
-		case SIL_GPU:
+		case FIL_GPU:
 			break;
-		case SIL_CPU:
+		case FIL_CPU:
 			for (uint32_t j = 0; j < device->n_buffers; j++) {
 				xnvme_buf_free(device->dev, device->buffers[j]);
 			}
 			xnvme_queue_term(device->queue);
 			break;
-		case SIL_FILE:
+		case FIL_FILE:
 			for (uint32_t j = 0; j < device->n_buffers; j++) {
 				cudaFree(device->buffers[j]);
 			}
@@ -493,24 +493,24 @@ sil_term(struct sil_iter *iter)
 }
 
 static int
-_init_stats(struct sil_stats **stats)
+_init_stats(struct fil_stats **stats)
 {
 	int err;
-	struct sil_stats *_stats = malloc(sizeof(struct sil_stats));
+	struct fil_stats *_stats = malloc(sizeof(struct fil_stats));
 	if (!_stats) {
 		err = errno;
 		fprintf(stderr, "Could not allocate stats: %d\n", err);
 		return err;
 	}
-	memset(_stats, 0, sizeof(struct sil_stats));
+	memset(_stats, 0, sizeof(struct fil_stats));
 	*stats = _stats;
 	return 0;
 }
 
 int
-sil_init(struct sil_iter **iter, char **dev_uris, uint32_t n_devs, struct sil_opts *opts)
+fil_init(struct fil_iter **iter, char **dev_uris, uint32_t n_devs, struct fil_opts *opts)
 {
-	struct sil_iter *_iter;
+	struct fil_iter *_iter;
 	srand(time(NULL));
 	int err;
 
@@ -529,15 +529,15 @@ sil_init(struct sil_iter **iter, char **dev_uris, uint32_t n_devs, struct sil_op
 		return EINVAL;
 	}
 
-	_iter = malloc(sizeof(struct sil_iter));
+	_iter = malloc(sizeof(struct fil_iter));
 	if (!_iter) {
 		err = errno;
 		fprintf(stderr, "Could not allocate iter: %d\n", err);
 		return err;
 	}
-	memset(_iter, 0, sizeof(struct sil_iter));
+	memset(_iter, 0, sizeof(struct fil_iter));
 
-	_iter->opts = malloc(sizeof(struct sil_opts));
+	_iter->opts = malloc(sizeof(struct fil_opts));
 	if (!_iter->opts) {
 		err = errno;
 		fprintf(stderr, "Conld not allocate opts: %d\n", err);
@@ -545,34 +545,34 @@ sil_init(struct sil_iter **iter, char **dev_uris, uint32_t n_devs, struct sil_op
 	}
 	memcpy(_iter->opts, opts, sizeof(*opts));
 
-	_iter->devs = malloc(sizeof(struct sil_dev *) * n_devs);
+	_iter->devs = malloc(sizeof(struct fil_dev *) * n_devs);
 	if (!_iter->devs) {
 		err = errno;
 		fprintf(stderr, "Could not allocate devices: %d\n", err);
-		sil_term(_iter);
+		fil_term(_iter);
 		return err;
 	}
 
 	err = _init_stats(&_iter->stats);
 	if (err) {
-		sil_term(_iter);
+		fil_term(_iter);
 		return err;
 	}
 
 	for (uint32_t i = 0; i < n_devs; i++) {
-		struct sil_dev *device = malloc(sizeof(struct sil_dev));
+		struct fil_dev *device = malloc(sizeof(struct fil_dev));
 		if (!device) {
 			err = errno;
 			fprintf(stderr, "Could not allocate handle for %s: %d\n", dev_uris[i], err);
-			sil_term(_iter);
+			fil_term(_iter);
 			return err;
 		}
-		memset(device, 0, sizeof(struct sil_dev));
+		memset(device, 0, sizeof(struct fil_dev));
 
 		err = _xnvme_setup(_iter, device, dev_uris[i]);
 		if (err) {
 			fprintf(stderr, "xNVMe setup failed for %s: %d\n", dev_uris[i], err);
-			sil_term(_iter);
+			fil_term(_iter);
 			return err;
 		}
 		if (_iter->opts->data_dir[0] != '\0') {
@@ -580,7 +580,7 @@ sil_init(struct sil_iter **iter, char **dev_uris, uint32_t n_devs, struct sil_op
 			if (err) {
 				fprintf(stderr, "XAL setup failed for %s: %d\n", dev_uris[i], err);
 				xnvme_dev_close(device->dev);
-				sil_term(_iter);
+				fil_term(_iter);
 				return err;
 			}
 		}
@@ -596,21 +596,21 @@ sil_init(struct sil_iter **iter, char **dev_uris, uint32_t n_devs, struct sil_op
 		}
 		err = _alloc(_iter, _iter->opts->batch_size);
 		if (err) {
-			sil_term(_iter);
+			fil_term(_iter);
 			return err;
 		}
 		switch (_iter->type) {
-		case SIL_GPU:
-			_iter->io_fn = sil_gpu_submit;
+		case FIL_GPU:
+			_iter->io_fn = fil_gpu_submit;
 			break;
-		case SIL_CPU:
-			_iter->io_fn = sil_cpu_submit;
+		case FIL_CPU:
+			_iter->io_fn = fil_cpu_submit;
 			break;
-		case SIL_FILE:
+		case FIL_FILE:
 			if (_iter->opts->async) {
-				_iter->io_fn = sil_gds_async_submit;
+				_iter->io_fn = fil_gds_async_submit;
 			} else {
-				_iter->io_fn = sil_file_submit;
+				_iter->io_fn = fil_file_submit;
 			}
 			_find_prefix(_iter);
 			break;
@@ -619,16 +619,16 @@ sil_init(struct sil_iter **iter, char **dev_uris, uint32_t n_devs, struct sil_op
 		// Create an entry for every file in every directory
 		err = _create_entries(_iter);
 		if (err) {
-			sil_term(_iter);
+			fil_term(_iter);
 			return err;
 		}
 
-		SIL_SHUFFLE(_iter->data->entries, struct sil_entry, _iter->data->n_entries,
+		FIL_SHUFFLE(_iter->data->entries, struct fil_entry, _iter->data->n_entries,
 			    uint64_t);
 
 	} else {
 		fprintf(stderr, "data_dir is required\n");
-		sil_term(_iter);
+		fil_term(_iter);
 		return EINVAL;
 	}
 
@@ -638,13 +638,13 @@ sil_init(struct sil_iter **iter, char **dev_uris, uint32_t n_devs, struct sil_op
 }
 
 int
-sil_next(struct sil_iter *iter, struct sil_output **output)
+fil_next(struct fil_iter *iter, struct fil_output **output)
 {
 	int err;
 
 	if (iter->data->entries && iter->data->index >= iter->data->n_entries) {
 		iter->data->index = 0;
-		SIL_SHUFFLE(iter->data->entries, struct sil_entry, iter->data->n_entries, uint64_t);
+		FIL_SHUFFLE(iter->data->entries, struct fil_entry, iter->data->n_entries, uint64_t);
 	}
 
 	err = iter->io_fn(iter);
@@ -658,10 +658,10 @@ sil_next(struct sil_iter *iter, struct sil_output **output)
 	return 0;
 }
 
-struct sil_opts
-sil_opts_default()
+struct fil_opts
+fil_opts_default()
 {
-	struct sil_opts opts = {.data_dir = "",
+	struct fil_opts opts = {.data_dir = "",
 				.mnt = "/mnt",
 				.backend = "aisio-cpu",
 				.nlb = 7,
@@ -677,8 +677,8 @@ sil_opts_default()
 	return opts;
 }
 
-struct sil_stats *
-sil_get_stats(struct sil_iter *iter)
+struct fil_stats *
+fil_get_stats(struct fil_iter *iter)
 {
 	return iter->stats;
 }

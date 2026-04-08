@@ -4,11 +4,11 @@ import numpy
 setup(
     ext_modules=[
         Extension(
-            name="sil",
-            sources=["silmodule.c"],
+            name="fil",
+            sources=["filmodule.c"],
             include_dirs=[numpy.get_include()],
-            extra_link_args=["-lsil"],
-            libraries=["sil"]
+            extra_link_args=["-lfil"],
+            libraries=["fil"]
         ),
     ]
 )

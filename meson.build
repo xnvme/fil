@@ -1,4 +1,4 @@
-project('sil', 'c',
+project('fil', 'c',
   version: '0.1.1',
   meson_version: '>=0.55.0',
   default_options: [
@@ -32,7 +32,7 @@ xal_dep = dependency(
   required: true
 )
 
-sil_deps = [
+fil_deps = [
   rt_dep,
   cuda_dep,
   xnvme_dep,
@@ -40,7 +40,7 @@ sil_deps = [
 ]
 
 public_headers = files(
-  'include/libsil.h',
+  'include/libfil.h',
 )
 
 sources = files(
@@ -50,20 +50,20 @@ sources = files(
 
 include_dirs = include_directories('include')
 
-sil_library = library('sil',
+fil_library = library('fil',
   sources: sources,
-  dependencies: sil_deps,
+  dependencies: fil_deps,
   include_directories: include_dirs,
   install: true
 )
 
-sil_cli = executable('sil',
+fil_cli = executable('fil',
   sources: 'src/cli.c',
-  link_with: sil_library,
+  link_with: fil_library,
   include_directories: include_dirs,
   install: true
 )
 
-pkg.generate(sil_library)
+pkg.generate(fil_library)
 
 install_headers(public_headers)

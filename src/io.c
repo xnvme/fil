@@ -9,10 +9,10 @@
 #include <time.h>
 #include <unistd.h>
 
-#include <libsil.h>
-#include <sil_io.h>
-#include <sil_iter.h>
-#include <sil_util.h>
+#include <libfil.h>
+#include <fil_io.h>
+#include <fil_iter.h>
+#include <fil_util.h>
 
 #include <libxal.h>
 #include <libxnvme.h>
@@ -147,9 +147,9 @@ _io_range_submit(struct xnvme_queue *queue, uint32_t opc, uint64_t *slbas, uint6
 }
 
 int
-sil_cpu_submit(struct sil_iter *iter)
+fil_cpu_submit(struct fil_iter *iter)
 {
-	struct sil_entry entry;
+	struct fil_entry entry;
 	struct xal_inode dir;
 	struct xal_inode file;
 	struct xal_extent extent, next_extent;
@@ -160,7 +160,7 @@ sil_cpu_submit(struct sil_iter *iter)
 
 	for (uint32_t i = 0; i < iter->n_devs; i++) {
 		clock_gettime(CLOCK_MONOTONIC_RAW, &start);
-		struct sil_dev *device = iter->devs[i];
+		struct fil_dev *device = iter->devs[i];
 		blocksize = xnvme_dev_get_geo(device->dev)->lba_nbytes;
 		xal_blksize = xal_get_sb_blocksize(device->xal);
 
@@ -219,15 +219,15 @@ sil_cpu_submit(struct sil_iter *iter)
 }
 
 int
-sil_gpu_submit(struct sil_iter *SIL_UNUSED(iter))
+fil_gpu_submit(struct fil_iter *FIL_UNUSED(iter))
 {
 	return ENOSYS;
 }
 
 int
-sil_file_submit(struct sil_iter *iter)
+fil_file_submit(struct fil_iter *iter)
 {
-	struct sil_entry entry;
+	struct fil_entry entry;
 	struct xal_inode dir;
 	struct xal_inode file;
 	struct timespec start, end;
@@ -249,7 +249,7 @@ sil_file_submit(struct sil_iter *iter)
 	for (uint32_t i = 0; i < iter->opts->batch_size; i++) {
 		clock_gettime(CLOCK_MONOTONIC_RAW, &start);
 		dev_id = i % iter->n_devs;
-		struct sil_dev *device = iter->devs[dev_id];
+		struct fil_dev *device = iter->devs[dev_id];
 		buf_id = device->buf++ % device->n_buffers;
 		buffer = device->buffers[buf_id];
 		prefix = device->file_io->prefix;
@@ -351,13 +351,13 @@ sil_file_submit(struct sil_iter *iter)
 }
 
 int
-sil_gds_async_submit(struct sil_iter *iter)
+fil_gds_async_submit(struct fil_iter *iter)
 {
-	struct sil_entry entry;
+	struct fil_entry entry;
 	struct xal_inode dir;
 	struct xal_inode file;
 	struct timespec start, end;
-	struct sil_gds_io *gds_io;
+	struct fil_gds_io *gds_io;
 	CUfileError_t status;
 	uint32_t buf_id, dev_id;
 	void *buffer;
@@ -369,7 +369,7 @@ sil_gds_async_submit(struct sil_iter *iter)
 	clock_gettime(CLOCK_MONOTONIC_RAW, &start);
 	for (uint32_t i = 0; i < iter->opts->batch_size; i++) {
 		dev_id = i % iter->n_devs;
-		struct sil_dev *device = iter->devs[dev_id];
+		struct fil_dev *device = iter->devs[dev_id];
 		buf_id = device->buf++ % device->n_buffers;
 		buffer = device->buffers[buf_id];
 		prefix = device->file_io->prefix;
