@@ -154,7 +154,7 @@ fil_cpu_submit(struct fil_iter *iter)
 	struct xal_inode file;
 	struct xal_extent extent, next_extent;
 	uint64_t nblocks, nbytes, blocksize, next_slba;
-	uint32_t xal_blksize;
+	uint32_t xal_blksize, nlb;
 	struct timespec start, end;
 	int err;
 
@@ -163,6 +163,7 @@ fil_cpu_submit(struct fil_iter *iter)
 		struct fil_dev *device = iter->devs[i];
 		blocksize = xnvme_dev_get_geo(device->dev)->lba_nbytes;
 		xal_blksize = xal_get_sb_blocksize(device->xal);
+		nlb = iter->opts->iosize / blocksize - 1;
 
 		for (uint32_t j = 0; j < device->n_buffers; j++) {
 			entry = iter->data->entries[iter->data->index++ % iter->data->n_entries];
@@ -197,7 +198,7 @@ fil_cpu_submit(struct fil_iter *iter)
 				nblocks = nbytes / blocksize;
 			}
 			device->cpu_io->elbas[j] = device->cpu_io->slbas[j] + nblocks - 1;
-			iter->stats->io += nblocks / (iter->opts->nlb + 1);
+			iter->stats->io += nblocks / (nlb + 1);
 			iter->stats->bytes += file.size;
 		}
 		clock_gettime(CLOCK_MONOTONIC_RAW, &end);
@@ -206,7 +207,7 @@ fil_cpu_submit(struct fil_iter *iter)
 		clock_gettime(CLOCK_MONOTONIC_RAW, &start);
 		err = _io_range_submit(device->queue, XNVME_SPEC_NVM_OPC_READ,
 					    device->cpu_io->slbas, device->cpu_io->elbas,
-					    iter->opts->nlb, iter->opts->nbytes, device->buffers,
+					    nlb, iter->opts->iosize, device->buffers,
 					    device->n_buffers);
 		clock_gettime(CLOCK_MONOTONIC_RAW, &end);
 		iter->stats->io_time += ELAPSED(start, end);

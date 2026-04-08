@@ -33,8 +33,7 @@ struct fil_opts {
 	char *data_dir;	      ///< A directory containing subdirectories with files
 	char *mnt;	      ///< The mountpoint of the drive
 	char *backend;	      ///< The backend to use
-	uint64_t nbytes;      ///< The number of bytes per I/O
-	uint32_t nlb;	      ///< The number of blocks per I/O (zero-indexed)
+	uint64_t iosize;      ///< The number of bytes per I/O
 	uint32_t gpu_nqueues; ///< The number of GPU queues to create
 	uint32_t gpu_tbsize;  ///< The size of a GPU threadblock
 	uint32_t queue_depth; ///< The NVMe queue depth
@@ -73,8 +72,7 @@ struct fil_output {
  * data_dir = NULL
  * mnt = "/mnt"
  * backend = "aisio-cpu"
- * nlb = 7
- * nbytes = 4096
+ * iosize = 4096
  * gpu_nqueues = 128
  * gpu_tbsize = 64
  * queue_depth = 1024
