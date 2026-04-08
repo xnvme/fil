@@ -4,10 +4,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <libsil.h>
+#include <libfil.h>
 #include <time.h>
 
-struct sil_cli_args {
+struct fil_cli_args {
 	char *dev_uris;
 	uint32_t batches;
 	uint32_t n_devs;
@@ -45,7 +45,7 @@ print_help(const char *name)
 }
 
 int
-parse_args(int argc, char *argv[], struct sil_cli_args *args, struct sil_opts *opts)
+parse_args(int argc, char *argv[], struct fil_cli_args *args, struct fil_opts *opts)
 {
 	if (argc < 2) {
 		print_help(argv[0]);
@@ -135,12 +135,12 @@ parse_args(int argc, char *argv[], struct sil_cli_args *args, struct sil_opts *o
 int
 main(int argc, char *argv[])
 {
-	struct sil_cli_args args = {0};
-	struct sil_opts opts = sil_opts_default();
-	struct sil_stats *stats;
+	struct fil_cli_args args = {0};
+	struct fil_opts opts = fil_opts_default();
+	struct fil_stats *stats;
 	struct timespec total_start, inter_start, inter_end, total_end;
-	struct sil_iter *iter;
-	struct sil_output *output;
+	struct fil_iter *iter;
+	struct fil_output *output;
 	char **dev_uris;
 	double time, elapsed;
 	uint64_t bytes = 0, io = 0;
@@ -162,20 +162,20 @@ main(int argc, char *argv[])
 	for (uint32_t i = 1; i < args.n_devs; i++) {
 		dev_uris[i] = strtok(NULL, ",");
 	}
-	err = sil_init(&iter, dev_uris, args.n_devs, &opts);
+	err = fil_init(&iter, dev_uris, args.n_devs, &opts);
 	if (err) {
 		fprintf(stderr, "Initialzing iterator failed, err: %d\n", err);
 		return err;
 	}
-	stats = sil_get_stats(iter);
+	stats = fil_get_stats(iter);
 	printf("Time, Batches, IOPS, MiB/s\n");
 	clock_gettime(CLOCK_MONOTONIC_RAW, &total_start);
 	clock_gettime(CLOCK_MONOTONIC_RAW, &inter_start);
 	for (uint32_t i = 0; i < args.batches; i++) {
-		err = sil_next(iter, &output);
+		err = fil_next(iter, &output);
 		if (err) {
 			fprintf(stderr, "Reading next batch failed, err: %d\n", err);
-			sil_term(iter);
+			fil_term(iter);
 			return err;
 		}
 		clock_gettime(CLOCK_MONOTONIC_RAW, &inter_end);
@@ -224,7 +224,7 @@ main(int argc, char *argv[])
 			       stats->avg_file_size / 1024);
 		}
 	}
-	sil_term(iter);
+	fil_term(iter);
 
 	return 0;
 }

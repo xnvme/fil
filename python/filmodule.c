@@ -5,22 +5,22 @@
 #include <stdint.h>
 #include <string.h>
 
-#include <libsil.h>
+#include <libfil.h>
 
-static PyObject *SilError = NULL;
-static struct sil_iter *SilIter = NULL;
+static PyObject *FilError = NULL;
+static struct fil_iter *FilIter = NULL;
 
 static PyObject *
 init(PyObject *self, PyObject *args, PyObject *keywds)
 {
-	struct sil_opts opts = sil_opts_default();
-	struct sil_stats *stats;
-	struct sil_iter *iter;
+	struct fil_opts opts = fil_opts_default();
+	struct fil_stats *stats;
+	struct fil_iter *iter;
 	char *dev_uri;
 	int err;
 
-	if (SilIter) {
-		PyErr_SetString(SilError, "A SIL iterator is already initialized");
+	if (FilIter) {
+		PyErr_SetString(FilError, "A FIL iterator is already initialized");
 		return NULL;
 	}
 
@@ -35,13 +35,13 @@ init(PyObject *self, PyObject *args, PyObject *keywds)
 		return NULL;
 	}
 
-	err = sil_init(&iter, &dev_uri, 1, &opts);
+	err = fil_init(&iter, &dev_uri, 1, &opts);
 	if (err) {
-		PyErr_SetString(SilError, "Initializing iterator failed");
+		PyErr_SetString(FilError, "Initializing iterator failed");
 		return NULL;
 	}
-	SilIter = iter;
-	stats = sil_get_stats(iter);
+	FilIter = iter;
+	stats = fil_get_stats(iter);
 
 	return PyLong_FromLong(stats->n_files);
 }
@@ -52,17 +52,17 @@ next(PyObject *self, PyObject *args)
 	PyObject *buf_list, *label_list, *buf;
 	Py_ssize_t list_len, tuple_len;
 	npy_intp dim;
-	struct sil_output *output;
+	struct fil_output *output;
 
 	int err;
-	if (!SilIter) {
-		PyErr_SetString(SilError, "No SIL iterator initialized");
+	if (!FilIter) {
+		PyErr_SetString(FilError, "No FIL iterator initialized");
 		return NULL;
 	}
 
-	err = sil_next(SilIter, &output);
+	err = fil_next(FilIter, &output);
 	if (err) {
-		PyErr_SetString(SilError, "Reading next batch failed");
+		PyErr_SetString(FilError, "Reading next batch failed");
 		return NULL;
 	}
 
@@ -74,13 +74,13 @@ next(PyObject *self, PyObject *args)
 		buf = PyArray_SimpleNewFromData(1, &dim, NPY_UINT8, output->buffers[i]);
 		err = PyList_SetItem(buf_list, i, buf);
 		if (err) {
-			PyErr_SetString(SilError, "Failed to add buffer to list");
+			PyErr_SetString(FilError, "Failed to add buffer to list");
 			return NULL;
 		}
 
 		err = PyList_SetItem(label_list, i, PyLong_FromLong(output->labels[i]));
 		if (err) {
-			PyErr_SetString(SilError, "Failed to add label to list");
+			PyErr_SetString(FilError, "Failed to add label to list");
 			return NULL;
 		}
 	}
@@ -91,51 +91,51 @@ next(PyObject *self, PyObject *args)
 static PyObject *
 term(PyObject *self, PyObject *args)
 {
-	if (!SilIter) {
-		PyErr_SetString(SilError, "No SIL iterator initialized");
+	if (!FilIter) {
+		PyErr_SetString(FilError, "No FIL iterator initialized");
 		return NULL;
 	}
 
-	sil_term(SilIter);
-	SilIter = NULL;
+	fil_term(FilIter);
+	FilIter = NULL;
 	Py_RETURN_NONE;
 }
 
 static int
-sil_module_exec(PyObject *m)
+fil_module_exec(PyObject *m)
 {
-	if (SilError != NULL) {
-		PyErr_SetString(PyExc_ImportError, "Can't initialize SIL module more than once");
+	if (FilError != NULL) {
+		PyErr_SetString(PyExc_ImportError, "Can't initialize FIL module more than once");
 		return -1;
 	}
-	SilError = PyErr_NewException("sil.error", NULL, NULL);
-	if (PyModule_AddObjectRef(m, "SilError", SilError) < 0) {
+	FilError = PyErr_NewException("fil.error", NULL, NULL);
+	if (PyModule_AddObjectRef(m, "FilError", FilError) < 0) {
 		return -1;
 	}
 	return 0;
 }
 
-static PyMethodDef sil_methods[] = {
+static PyMethodDef fil_methods[] = {
     {"init", (PyCFunction)(void (*)(void))init, METH_VARARGS | METH_KEYWORDS,
-     "Initialize SIL iterator. Returns number of files in the data set."},
+     "Initialize FIL iterator. Returns number of files in the data set."},
     {"next", next, METH_VARARGS,
-     "Get the next batch from the SIL iterator. Returns list of NumPy Arrays."},
-    {"term", term, METH_VARARGS, "Terminate the SIL iterator."},
+     "Get the next batch from the FIL iterator. Returns list of NumPy Arrays."},
+    {"term", term, METH_VARARGS, "Terminate the FIL iterator."},
     {NULL, NULL, 0, NULL}};
 
-static PyModuleDef_Slot sil_module_slots[] = {{Py_mod_exec, sil_module_exec}, {0, NULL}};
+static PyModuleDef_Slot fil_module_slots[] = {{Py_mod_exec, fil_module_exec}, {0, NULL}};
 
-static struct PyModuleDef sil_module = {
+static struct PyModuleDef fil_module = {
     .m_base = PyModuleDef_HEAD_INIT,
-    .m_name = "sil",
+    .m_name = "fil",
     .m_size = 0,
-    .m_slots = sil_module_slots,
-    .m_methods = sil_methods,
+    .m_slots = fil_module_slots,
+    .m_methods = fil_methods,
 };
 
 PyMODINIT_FUNC
-PyInit_sil(void)
+PyInit_fil(void)
 {
 	import_array();
-	return PyModuleDef_Init(&sil_module);
+	return PyModuleDef_Init(&fil_module);
 }

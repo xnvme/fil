@@ -1,4 +1,4 @@
-# Сіль: Storage Iterator Library
+# FIL: File Iterator Library
 This library allows you to iterate batch-wise over files,
 without mounting the file system.
 
@@ -14,11 +14,11 @@ The library works with the following directory structure:
 ```
 
 ## CLI
-The `sil` cli tool allows you to run benchmarks reporting files per second, bandwidth and I/O per second.
+The `fil` cli tool allows you to run benchmarks reporting files per second, bandwidth and I/O per second.
 
 For example:
 ```
-  $ root@somewhere:~# sil /dev/nvme0n1 --root-dir val --batches 10 --batch-size 128
+  $ root@somewhere:~# fil /dev/nvme0n1 --root-dir val --batches 10 --batch-size 128
   $ Seconds: 0.166561
   $ File/s: 7684.852369
   $ MiB/s: 1039.429754
@@ -26,12 +26,10 @@ For example:
 ```
 
 ## API
-- `sil_init()`
+- `fil_init()`
   Initialize the iterator
-- `sil_next()`
+- `fil_next()`
   Get the next batch from the iterator
-- `sil_term()`
+- `fil_term()`
   Terminate the iterator
 
-## Epilogue
-Сіль means salt in Ukranian; who would cook without adding salt?
