@@ -24,8 +24,8 @@ init(PyObject *self, PyObject *args, PyObject *keywds)
 		return NULL;
 	}
 
-	static char *kwlist[] = {"dev_uri",	"data_dir",   "mnt",	     "backend",
-				 "iosize",	"gpu_nqueues", "gpu_tbsize",
+	static char *kwlist[] = {"dev_uri", "data_dir", "mnt", "backend",
+				 "iosize", "gpu_nqueues", "gpu_tbsize",
 				 "queue_depth", "batch_size", NULL};
 
 	if (!PyArg_ParseTupleAndKeywords(args, keywds, "s|$sssiiiii", kwlist, &dev_uri,
