@@ -26,9 +26,7 @@ print_help(const char *name)
 			"[default], aisio-gpu, posix, gds)\n");
 	fprintf(stderr, "\t --mnt \t \t | \t The mountpoint of the drive (default = /mnt). Only "
 			"relevant for backends: 'posix' and 'gds'\n");
-	fprintf(stderr, "\t --nbytes \t | \t The number of bytes per I/O (default = 4096)\n");
-	fprintf(stderr,
-		"\t --nlb \t | \t The number of blocks per I/O (zero-indexed) (default = 7)\n");
+	fprintf(stderr, "\t --iosize \t | \t The number of bytes per I/O (default = 4096). Only relevant for backends: 'aisio-cpu' and 'aisio-gpu'\n");
 	fprintf(stderr, "\t --gpu-nqueues \t | \t The number of GPU queues to create (default = "
 			"128). Only relevant for backend: 'aisio-gpu'\n");
 	fprintf(stderr, "\t --gpu-tbsize \t | \t The size of a GPU threadblock (default = 64). "
@@ -59,14 +57,12 @@ parse_args(int argc, char *argv[], struct fil_cli_args *args, struct fil_opts *o
 			opts->mnt = argv[++i];
 		} else if (strcmp(argv[i], "--backend") == 0) {
 			opts->backend = argv[++i];
-		} else if (strcmp(argv[i], "--nbytes") == 0) {
-			opts->nbytes = strtol(argv[++i], (char **)NULL, 10);
-			if (opts->nbytes <= 0) {
-				fprintf(stderr, "Invalid nbytes: %s\n", argv[i]);
+		} else if (strcmp(argv[i], "--iosize") == 0) {
+			opts->iosize = strtoul(argv[++i], (char **)NULL, 10);
+			if (opts->iosize == 0) {
+				fprintf(stderr, "Invalid iosize: %s\n", argv[i]);
 				return -EINVAL;
 			}
-		} else if (strcmp(argv[i], "--nlb") == 0) {
-			opts->nlb = strtol(argv[++i], (char **)NULL, 10);
 		} else if (strcmp(argv[i], "--gpu-nqueues") == 0) {
 			opts->gpu_nqueues = strtol(argv[++i], (char **)NULL, 10);
 			if (opts->gpu_nqueues <= 0) {
