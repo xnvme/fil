@@ -35,7 +35,6 @@ print_help(const char *name)
 	fprintf(stderr,
 		"\t --batch-size \t | \t The number of files to read per batch (default = 1)\n");
 	fprintf(stderr, "\t --batches \t | \t The number of batches to read (default = 1)\n");
-	fprintf(stderr, "\t --random \t | \t Shuffle IO before submission\n");
 	fprintf(stderr, "\t --buffered \t | \t Don't open with O_DIRECT when using POSIX\n");
 	fprintf(stderr, "\t --async \t | \t Use the async API when using GDS\n");
 	fprintf(stderr, "\t --summary \t | \t Print IO and dataset stats\n");
@@ -93,8 +92,6 @@ parse_args(int argc, char *argv[], struct fil_cli_args *args, struct fil_opts *o
 				fprintf(stderr, "Invalid number of batches: %s\n", argv[i]);
 				return -EINVAL;
 			}
-		} else if (strcmp(argv[i], "--random") == 0) {
-			opts->random = true;
 		} else if (strcmp(argv[i], "--buffered") == 0) {
 			opts->buffered = true;
 		} else if (strcmp(argv[i], "--async") == 0) {
