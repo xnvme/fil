@@ -38,7 +38,6 @@ struct fil_opts {
 	uint32_t gpu_tbsize;  ///< The size of a GPU threadblock
 	uint32_t queue_depth; ///< The NVMe queue depth
 	uint32_t batch_size;  ///< The number of files per batch
-	bool random;	      ///< Whether to shuffle IO before submission
 	bool buffered;	      ///< Whether to use O_DIRECT with POSIX
 	bool async;	      ///< Whether to use async API with GDS
 };

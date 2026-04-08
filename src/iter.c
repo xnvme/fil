@@ -589,11 +589,6 @@ fil_init(struct fil_iter **iter, char **dev_uris, uint32_t n_devs, struct fil_op
 	}
 
 	if (_iter->opts->data_dir[0] != '\0') {
-		if (_iter->opts->random) {
-			fprintf(stderr, "Shuffling IOs before submission is not supported when "
-					"reading files\n");
-			return EINVAL;
-		}
 		err = _alloc(_iter, _iter->opts->batch_size);
 		if (err) {
 			fil_term(_iter);
@@ -669,7 +664,6 @@ fil_opts_default()
 				.gpu_tbsize = 64,
 				.queue_depth = 1024,
 				.batch_size = 1,
-				.random = false,
 				.buffered = false,
 				.async = false};
 
