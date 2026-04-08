@@ -50,7 +50,7 @@ parse_args(int argc, char *argv[], struct fil_cli_args *args, struct fil_opts *o
 	}
 
 	for (int i = 1; i < argc; i++) {
-		if (strcmp(argv[i], "--root-dir") == 0 || strcmp(argv[i], "--data-dir") == 0) {
+		if (strcmp(argv[i], "--data-dir") == 0) {
 			opts->data_dir = argv[++i];
 		} else if (strcmp(argv[i], "--mnt") == 0) {
 			opts->mnt = argv[++i];
