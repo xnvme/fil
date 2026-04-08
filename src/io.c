@@ -50,7 +50,7 @@ _submit(struct _work *work, struct xnvme_cmd_ctx *ctx)
 
 	ctx->cmd.common.opcode = work->opc;
 	ctx->cmd.common.nsid = xnvme_dev_get_nsid(ctx->dev);
-	if (work->ranges[work->cur_range].slba >= work->ranges[work->cur_range].elba) {
+	if (work->ranges[work->cur_range].slba > work->ranges[work->cur_range].elba) {
 		work->cur_range += 1;
 	}
 	if (work->cur_range >= work->n_ranges) {
