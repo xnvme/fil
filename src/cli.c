@@ -31,7 +31,7 @@ print_help(const char *name)
 			"128). Only relevant for backend: 'aisio-gpu'\n");
 	fprintf(stderr, "\t --gpu-tbsize \t | \t The size of a GPU threadblock (default = 64). "
 			"Only relevant for backend: 'aisio-gpu'\n");
-	fprintf(stderr, "\t --queue-depth \t | \t The NVMe queue depth (default = 1024)\n");
+	fprintf(stderr, "\t --queue-depth \t | \t The NVMe queue depth (default = 1024). Only relevant for backends: 'aisio-cpu' and 'aisio-gpu'\n");
 	fprintf(stderr,
 		"\t --batch-size \t | \t The number of files to read per batch (default = 1)\n");
 	fprintf(stderr, "\t --batches \t | \t The number of batches to read (default = 1)\n");
