@@ -56,7 +56,6 @@ filperf <device-uri>[,<device-uri>,...] [options]
 | `--iosize <n>` | `4096` | Number of bytes per I/O (`aisio-cpu` and `aisio-gpu` only) |
 | `--queue-depth <n>` | `1024` | NVMe queue depth (`aisio-cpu` and `aisio-gpu` only) |
 | `--gpu-nqueues <n>` | `128` | Number of GPU queues (`aisio-gpu` only) |
-| `--gpu-tbsize <n>` | `64` | GPU threadblock size (`aisio-gpu` only) |
 | `--buffered` | off | Disable `O_DIRECT` when using `posix` backend |
 | `--async` | off | Use async API when using `gds` backend |
 | `--summary` | off | Print I/O and dataset statistics after completion |

@@ -11,6 +11,7 @@
 #include <cufile.h>
 #include <libxal.h>
 #include <libxnvme.h>
+#include <libxnvme_cuda.h>
 
 // Arbitrary value out of range of normal err
 #define DATA_DIR_FOUND 9000
@@ -52,6 +53,7 @@ _xnvme_setup(struct fil_iter *iter, struct fil_dev *device, const char *uri)
 		opts.be = "upcie";
 		iter->type = FIL_CPU;
 	} else if (strcmp(backend, "aisio-gpu") == 0) {
+		opts.be = "upcie";
 		iter->type = FIL_GPU;
 	} else if (strcmp(backend, "posix") == 0) {
 		opts.be = "linux";
@@ -69,10 +71,6 @@ _xnvme_setup(struct fil_iter *iter, struct fil_dev *device, const char *uri)
 		return EINVAL;
 	}
 
-	if (iter->type == FIL_GPU) {
-		return -ENOSYS;
-	}
-
 	dev = xnvme_dev_open(uri, &opts);
 	if (!dev) {
 		err = errno;
@@ -87,7 +85,55 @@ _xnvme_setup(struct fil_iter *iter, struct fil_dev *device, const char *uri)
 		return err;
 	}
 
-	if (iter->type == FIL_CPU) {
+	if (iter->type == FIL_GPU) {
+		struct xnvme_opts cuda_opts = xnvme_opts_default();
+
+		cuda_opts.be = "upcie-cuda";
+		device->cuda_dev = xnvme_dev_open(uri, &cuda_opts);
+		if (!device->cuda_dev) {
+			err = errno;
+			xnvme_dev_close(dev);
+			fprintf(stderr, "xnvme_dev_open(upcie-cuda): %d\n", err);
+			return err;
+		}
+		device->nsid = xnvme_dev_get_nsid(device->cuda_dev);
+		device->cuda_queues =
+		    malloc(sizeof(*device->cuda_queues) * iter->opts->gpu_nqueues);
+		if (!device->cuda_queues) {
+			err = errno;
+			fprintf(stderr, "malloc(cuda_queues): %d\n", err);
+			goto gpu_err_close_cuda;
+		}
+
+		for (uint32_t q = 0; q < iter->opts->gpu_nqueues; q++) {
+			err = xnvme_cuda_queue_create(device->cuda_dev, iter->opts->queue_depth,
+						      &device->cuda_queues[q]);
+			if (err) {
+				fprintf(stderr, "xnvme_cuda_queue_create(): %d\n", err);
+				for (uint32_t k = 0; k < q; k++) {
+					xnvme_cuda_queue_destroy(device->cuda_dev,
+								 device->cuda_queues[k]);
+				}
+				goto gpu_err_free_queues;
+			}
+		}
+
+		err = cudaMalloc((void **)&device->cuda_queues_dev,
+				 sizeof(*device->cuda_queues) * iter->opts->gpu_nqueues);
+		if (err) {
+			fprintf(stderr, "cudaMalloc(cuda_queues_dev): %d\n", err);
+			goto gpu_err_destroy_queues;
+		}
+
+		err = cudaMemcpy(device->cuda_queues_dev, device->cuda_queues,
+				 sizeof(*device->cuda_queues) * iter->opts->gpu_nqueues,
+				 cudaMemcpyHostToDevice);
+		if (err) {
+			fprintf(stderr, "cudaMemcpy(cuda_queues_dev): %d\n", err);
+			cudaFree(device->cuda_queues_dev);
+			goto gpu_err_destroy_queues;
+		}
+	} else if (iter->type == FIL_CPU) {
 		err = xnvme_queue_init(dev, iter->opts->queue_depth, 0, &device->queue);
 		if (err) {
 			xnvme_dev_close(dev);
@@ -98,6 +144,17 @@ _xnvme_setup(struct fil_iter *iter, struct fil_dev *device, const char *uri)
 
 	device->dev = dev;
 	return 0;
+
+gpu_err_destroy_queues:
+	for (uint32_t k = 0; k < iter->opts->gpu_nqueues; k++) {
+		xnvme_cuda_queue_destroy(device->cuda_dev, device->cuda_queues[k]);
+	}
+gpu_err_free_queues:
+	free(device->cuda_queues);
+gpu_err_close_cuda:
+	xnvme_dev_close(device->cuda_dev);
+	xnvme_dev_close(dev);
+	return err;
 }
 
 static int
@@ -310,7 +367,9 @@ _alloc(struct fil_iter *iter, uint32_t n_buffers)
 		for (uint32_t j = 0; j < device->n_buffers; j++) {
 			switch (iter->type) {
 			case FIL_GPU:
-				return -ENOSYS;
+				device->buffers[j] =
+				    xnvme_buf_alloc(device->cuda_dev, iter->buffer_size);
+				break;
 			case FIL_CPU:
 				device->buffers[j] =
 				    xnvme_buf_alloc(device->dev, iter->buffer_size);
@@ -365,6 +424,66 @@ _alloc(struct fil_iter *iter, uint32_t n_buffers)
 				err = errno;
 				fprintf(stderr, "Could not allocate bounce buffer: %d\n", err);
 				return err;
+			}
+		} else if (iter->type == FIL_GPU) {
+			uint32_t n_cmds =
+			    (iter->buffer_size / iter->opts->iosize) * device->n_buffers;
+
+			device->gpu_io.n_io = 0;
+
+			err = cudaMallocHost((void **)&device->gpu_io.cmds_host,
+					     sizeof(struct xnvme_spec_cmd) * n_cmds);
+			if (err) {
+				fprintf(stderr, "Could not allocate gpu_io.cmds_host: %d\n", err);
+				return err;
+			}
+
+			// Pre-fill the fields that are constant for the whole run so the
+			// per-batch hot loop only writes slba/nlb/prp1.
+			memset(device->gpu_io.cmds_host, 0,
+			       sizeof(struct xnvme_spec_cmd) * n_cmds);
+
+			for (uint32_t c = 0; c < n_cmds; c++) {
+				device->gpu_io.cmds_host[c].common.opcode =
+				    XNVME_SPEC_NVM_OPC_READ;
+				device->gpu_io.cmds_host[c].common.nsid = device->nsid;
+			}
+
+			err = cudaMalloc((void **)&device->gpu_io.cmds_dev,
+					 sizeof(struct xnvme_spec_cmd) * n_cmds);
+			if (err) {
+				cudaFreeHost(device->gpu_io.cmds_host);
+				device->gpu_io.cmds_host = NULL;
+				fprintf(stderr, "Could not allocate gpu_io.cmds_dev: %d\n", err);
+				return err;
+			}
+
+			device->gpu_io.prp1_base = malloc(sizeof(uint64_t) * device->n_buffers);
+			if (!device->gpu_io.prp1_base) {
+				err = errno;
+				cudaFree(device->gpu_io.cmds_dev);
+				device->gpu_io.cmds_dev = NULL;
+				cudaFreeHost(device->gpu_io.cmds_host);
+				device->gpu_io.cmds_host = NULL;
+				fprintf(stderr, "Could not allocate gpu_io.prp1_base: %d\n", err);
+				return err;
+			}
+
+			for (uint32_t j = 0; j < device->n_buffers; j++) {
+				uint64_t prp1;
+				err = xnvme_buf_vtophys(
+				    device->cuda_dev, device->buffers[j], &prp1);
+				if (err) {
+					free(device->gpu_io.prp1_base);
+					device->gpu_io.prp1_base = NULL;
+					cudaFree(device->gpu_io.cmds_dev);
+					device->gpu_io.cmds_dev = NULL;
+					cudaFreeHost(device->gpu_io.cmds_host);
+					device->gpu_io.cmds_host = NULL;
+					fprintf(stderr, "xnvme_buf_vtophys(): %d\n", err);
+					return err;
+				}
+				device->gpu_io.prp1_base[j] = prp1;
 			}
 		}
 	}
@@ -440,6 +559,18 @@ fil_term(struct fil_iter *iter)
 		struct fil_dev *device = iter->devs[i];
 		switch (iter->type) {
 		case FIL_GPU:
+			for (uint32_t j = 0; j < device->n_buffers; j++) {
+				xnvme_buf_free(device->cuda_dev, device->buffers[j]);
+			}
+			cudaFree(device->cuda_queues_dev);
+			for (uint32_t q = 0; q < iter->opts->gpu_nqueues; q++) {
+				xnvme_cuda_queue_destroy(device->cuda_dev, device->cuda_queues[q]);
+			}
+			free(device->cuda_queues);
+			xnvme_dev_close(device->cuda_dev);
+			cudaFreeHost(device->gpu_io.cmds_host);
+			cudaFree(device->gpu_io.cmds_dev);
+			free(device->gpu_io.prp1_base);
 			break;
 		case FIL_CPU:
 			for (uint32_t j = 0; j < device->n_buffers; j++) {
@@ -663,7 +794,6 @@ fil_opts_default()
 				.backend = "aisio-cpu",
 				.iosize = 4096,
 				.gpu_nqueues = 128,
-				.gpu_tbsize = 64,
 				.queue_depth = 1024,
 				.batch_size = 1,
 				.buffered = false,

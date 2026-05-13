@@ -1,4 +1,4 @@
-project('fil', 'c',
+project('fil', 'c', 'cuda',
   version: '0.1.1',
   meson_version: '>=0.55.0',
   default_options: [
@@ -10,6 +10,9 @@ project('fil', 'c',
   ]
 )
 
+# Targets the local GPU architecture; change for cross-arch builds
+add_project_arguments('-arch=native', language: 'cuda')
+
 pkg = import('pkgconfig')
 cc = meson.get_compiler('c')
 
@@ -18,7 +21,7 @@ if not cc.has_function('clock_gettime', prefix: '#include <time.h>', dependencie
   error('clock_gettime not found')
 endif
 
-cuda_dep = dependency('cuda', modules: ['cufile'])
+cuda_dep = dependency('cuda', modules: ['cuda', 'cufile'])
 
 xnvme_dep = dependency(
   'xnvme',
@@ -46,6 +49,7 @@ public_headers = files(
 sources = files(
   'src/iter.c',
   'src/io.c',
+  'src/gpu_io.cu',
 )
 
 include_dirs = include_directories('include')
