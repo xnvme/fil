@@ -36,6 +36,19 @@ struct fil_gds_io {
 	cudaStream_t *streams;
 };
 
+struct fil_gpu_io {
+	struct xnvme_spec_cmd *cmds_host;
+	struct xnvme_spec_cmd *cmds_dev;
+	uint64_t *prp1_base;
+	uint32_t n_io;
+};
+
+struct xnvme_cuda_queue;
+
+void
+gpu_io_launch(struct xnvme_cuda_queue **queues_dev, uint32_t n_queues,
+	      struct xnvme_spec_cmd *cmds_dev, uint32_t n_io, uint32_t queue_depth);
+
 int
 fil_cpu_submit(struct fil_iter *iter);
 

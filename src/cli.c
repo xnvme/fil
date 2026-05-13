@@ -29,8 +29,6 @@ print_help(const char *name)
 	fprintf(stderr, "\t --iosize \t | \t The number of bytes per I/O (default = 4096). Only relevant for backends: 'aisio-cpu' and 'aisio-gpu'\n");
 	fprintf(stderr, "\t --gpu-nqueues \t | \t The number of GPU queues to create (default = "
 			"128). Only relevant for backend: 'aisio-gpu'\n");
-	fprintf(stderr, "\t --gpu-tbsize \t | \t The size of a GPU threadblock (default = 64). "
-			"Only relevant for backend: 'aisio-gpu'\n");
 	fprintf(stderr, "\t --queue-depth \t | \t The NVMe queue depth (default = 1024). Only relevant for backends: 'aisio-cpu' and 'aisio-gpu'\n");
 	fprintf(stderr,
 		"\t --batch-size \t | \t The number of files to read per batch (default = 1)\n");
@@ -66,12 +64,6 @@ parse_args(int argc, char *argv[], struct fil_cli_args *args, struct fil_opts *o
 			opts->gpu_nqueues = strtol(argv[++i], (char **)NULL, 10);
 			if (opts->gpu_nqueues <= 0) {
 				fprintf(stderr, "Invalid number of GPU queues: %s\n", argv[i]);
-				return -EINVAL;
-			}
-		} else if (strcmp(argv[i], "--gpu-tbsize") == 0) {
-			opts->gpu_tbsize = strtol(argv[++i], (char **)NULL, 10);
-			if (opts->gpu_tbsize <= 0) {
-				fprintf(stderr, "Invalid GPU threadblock size: %s\n", argv[i]);
 				return -EINVAL;
 			}
 		} else if (strcmp(argv[i], "--queue-depth") == 0) {

@@ -35,7 +35,6 @@ struct fil_opts {
 	char *backend;	      ///< The backend to use
 	uint64_t iosize;      ///< The number of bytes per I/O
 	uint32_t gpu_nqueues; ///< The number of GPU queues to create
-	uint32_t gpu_tbsize;  ///< The size of a GPU threadblock
 	uint32_t queue_depth; ///< The NVMe queue depth
 	uint32_t batch_size;  ///< The number of files per batch
 	bool buffered;	      ///< Whether to use O_DIRECT with POSIX
@@ -73,7 +72,6 @@ struct fil_output {
  * backend = "aisio-cpu"
  * iosize = 4096
  * gpu_nqueues = 128
- * gpu_tbsize = 64
  * queue_depth = 1024
  * batch_size = 1
  *

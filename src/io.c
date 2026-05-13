@@ -239,9 +239,104 @@ fil_cpu_submit(struct fil_iter *iter)
 }
 
 int
-fil_gpu_submit(struct fil_iter *FIL_UNUSED(iter))
+fil_gpu_submit(struct fil_iter *iter)
 {
-	return ENOSYS;
+	struct xal_inode dir, file;
+	struct xal_extent extent;
+	struct timespec start, end;
+	struct fil_dev *device;
+	struct xnvme_spec_cmd *cmd;
+	uint64_t nblocks, nbytes, slba, offset;
+	uint32_t dev_id, buf_id;
+	int err;
+
+	uint64_t max_ios_per_buf = iter->buffer_size / iter->opts->iosize;
+	uint64_t blocksizes[iter->n_devs];
+	uint32_t nlbs[iter->n_devs];
+	uint32_t xal_blksizes[iter->n_devs];
+
+	for (uint32_t i = 0; i < iter->n_devs; i++) {
+		blocksizes[i] = xnvme_dev_get_geo(iter->devs[i]->dev)->lba_nbytes;
+		if (iter->opts->iosize < blocksizes[i] ||
+		    iter->opts->iosize % blocksizes[i]) {
+			fprintf(stderr,
+				"iosize (%lu) must be a multiple of the device LBA size (%lu)\n",
+				iter->opts->iosize, blocksizes[i]);
+			return EINVAL;
+		}
+		nlbs[i] = iter->opts->iosize / blocksizes[i] - 1;
+		xal_blksizes[i] = xal_get_sb_blocksize(iter->devs[i]->xal);
+		iter->devs[i]->gpu_io.n_io = 0;
+	}
+
+	clock_gettime(CLOCK_MONOTONIC_RAW, &start);
+	for (uint32_t i = 0; i < iter->opts->batch_size; i++) {
+		dev_id = i % iter->n_devs;
+		device = iter->devs[dev_id];
+		buf_id = device->buf++ % device->n_buffers;
+		offset = 0;
+
+		file = fil_next_file(iter, device, dev_id, buf_id, &dir);
+
+		for (uint32_t j = 0; j < file.content.extents.count; j++) {
+			extent = file.content.extents.extent[j];
+			slba = fil_extent_slba(device, &extent, blocksizes[dev_id]);
+			nbytes = extent.nblocks * xal_blksizes[dev_id];
+			nblocks = nbytes / blocksizes[dev_id];
+
+			for (uint64_t k = 0; k < nblocks / (nlbs[dev_id] + 1); k++) {
+				cmd = &device->gpu_io.cmds_host[device->gpu_io.n_io];
+
+				if (offset >= max_ios_per_buf) {
+					fprintf(stderr,
+						"File %s exceeds --max-file-size; "
+						"increase it to fit the largest file\n",
+						file.name);
+					return EINVAL;
+				}
+
+				cmd->nvm.slba = slba + k * (nlbs[dev_id] + 1);
+				cmd->nvm.nlb = nlbs[dev_id];
+				cmd->common.dptr.prp.prp1 =
+				    device->gpu_io.prp1_base[buf_id] + offset * iter->opts->iosize;
+				device->gpu_io.n_io++;
+				offset++;
+			}
+		}
+	}
+	clock_gettime(CLOCK_MONOTONIC_RAW, &end);
+	iter->stats->prep_time += ELAPSED(start, end);
+
+	for (uint32_t i = 0; i < iter->n_devs; i++) {
+		iter->stats->io += iter->devs[i]->gpu_io.n_io;
+	}
+
+	clock_gettime(CLOCK_MONOTONIC_RAW, &start);
+	for (uint32_t i = 0; i < iter->n_devs; i++) {
+		device = iter->devs[i];
+
+		if (!device->gpu_io.n_io) {
+			continue;
+		}
+		err = cudaMemcpy(device->gpu_io.cmds_dev, device->gpu_io.cmds_host,
+				 sizeof(struct xnvme_spec_cmd) * device->gpu_io.n_io,
+				 cudaMemcpyHostToDevice);
+		if (err) {
+			fprintf(stderr, "cudaMemcpy failed: %d\n", err);
+			return err;
+		}
+		gpu_io_launch(device->cuda_queues_dev, iter->opts->gpu_nqueues,
+			      device->gpu_io.cmds_dev, device->gpu_io.n_io,
+			      iter->opts->queue_depth);
+	}
+	err = cudaDeviceSynchronize();
+	if (err) {
+		fprintf(stderr, "cudaDeviceSynchronize failed: %d\n", err);
+		return err;
+	}
+	clock_gettime(CLOCK_MONOTONIC_RAW, &end);
+	iter->stats->io_time += ELAPSED(start, end);
+	return 0;
 }
 
 int
