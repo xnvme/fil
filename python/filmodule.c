@@ -25,12 +25,12 @@ init(PyObject *self, PyObject *args, PyObject *keywds)
 	}
 
 	static char *kwlist[] = {"dev_uri", "data_dir", "mnt", "backend",
-				 "iosize", "gpu_nqueues",
+				 "iosize", "gpu_nqueues", "max_file_size",
 				 "queue_depth", "batch_size", NULL};
 
-	if (!PyArg_ParseTupleAndKeywords(args, keywds, "s|$sssiiii", kwlist, &dev_uri,
+	if (!PyArg_ParseTupleAndKeywords(args, keywds, "s|$sssiikii", kwlist, &dev_uri,
 					 &opts.data_dir, &opts.mnt, &opts.backend, &opts.iosize,
-					 &opts.gpu_nqueues,
+					 &opts.gpu_nqueues, &opts.max_file_size,
 					 &opts.queue_depth, &opts.batch_size)) {
 		return NULL;
 	}

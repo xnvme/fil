@@ -16,6 +16,12 @@
 // Arbitrary value out of range of normal err
 #define DATA_DIR_FOUND 9000
 
+// Overhead for upcie heap beyond buffer data: covers NVMe queue allocations and internal metadata
+#define UPCIE_HEAP_OVERHEAD (128 << 20)
+#define UPCIE_HEAP_ALIGN    (2 << 20)
+#define UPCIE_HEAP_SIZE(buf_total) \
+	(((buf_total) + UPCIE_HEAP_OVERHEAD + UPCIE_HEAP_ALIGN - 1) & ~(UPCIE_HEAP_ALIGN - 1))
+
 static int
 inode_cmp(const void *a, const void *b)
 {
@@ -32,6 +38,7 @@ _xnvme_setup(struct fil_iter *iter, struct fil_dev *device, const char *uri)
 {
 	const char *backend = iter->opts->backend;
 	struct xnvme_opts opts = xnvme_opts_default();
+	size_t heap_size = UPCIE_HEAP_SIZE(iter->opts->max_file_size * iter->opts->batch_size);
 	struct xnvme_dev *dev;
 	int err;
 	CUfileError_t status;
@@ -51,6 +58,7 @@ _xnvme_setup(struct fil_iter *iter, struct fil_dev *device, const char *uri)
 		iter->type = FIL_CPU;
 	} else if (strcmp(backend, "aisio-cpu") == 0) {
 		opts.be = "upcie";
+		opts.host_heap_size = heap_size;
 		iter->type = FIL_CPU;
 	} else if (strcmp(backend, "aisio-gpu") == 0) {
 		opts.be = "upcie";
@@ -89,6 +97,7 @@ _xnvme_setup(struct fil_iter *iter, struct fil_dev *device, const char *uri)
 		struct xnvme_opts cuda_opts = xnvme_opts_default();
 
 		cuda_opts.be = "upcie-cuda";
+		cuda_opts.device_heap_size = heap_size;
 		device->cuda_dev = xnvme_dev_open(uri, &cuda_opts);
 		if (!device->cuda_dev) {
 			err = errno;
@@ -261,20 +270,21 @@ _xal_setup(struct fil_iter *iter, struct fil_dev *device)
 		return err;
 	}
 
-	if (!iter->buffer_size) {
-		err = xal_walk(xal, device->root_inode, find_buffer_size, iter->stats);
-		if (err) {
-			fprintf(stderr, "xal_walk(find_buffer_size): %d\n", err);
-			return err;
-		}
-
-		xal_blksize = xal_get_sb_blocksize(xal);
-
-		iter->stats->avg_file_size = iter->stats->avg_file_size / iter->stats->n_files;
-		// Align to page size
-		iter->buffer_size = (1 + ((iter->stats->max_file_size - 1) / xal_blksize)) *
-				    (xal_blksize);
+	// Walk the dataset to populate the summary stats (n_files, max/avg file
+	// size) and derive buffer_size from the true largest file.
+	err = xal_walk(xal, device->root_inode, find_buffer_size, iter->stats);
+	if (err) {
+		fprintf(stderr, "xal_walk(find_buffer_size): %d\n", err);
+		return err;
 	}
+
+	xal_blksize = xal_get_sb_blocksize(xal);
+
+	iter->stats->avg_file_size = iter->stats->avg_file_size / iter->stats->n_files;
+
+	// Align to page size
+	iter->buffer_size =
+	    (1 + ((iter->stats->max_file_size - 1) / xal_blksize)) * (xal_blksize);
 
 	// Sort the directories so we can derive labels
 	if (device->root_inode->content.dentries.count > 1) {
@@ -660,6 +670,12 @@ fil_init(struct fil_iter **iter, char **dev_uris, uint32_t n_devs, struct fil_op
 		return EINVAL;
 	}
 
+	if (!opts->max_file_size && (strcmp(opts->backend, "aisio-cpu") == 0 ||
+				     strcmp(opts->backend, "aisio-gpu") == 0)) {
+		fprintf(stderr, "--max-file-size is required for aisio backends\n");
+		return EINVAL;
+	}
+
 	_iter = malloc(sizeof(struct fil_iter));
 	if (!_iter) {
 		err = errno;
@@ -795,6 +811,7 @@ fil_opts_default()
 				.iosize = 4096,
 				.gpu_nqueues = 128,
 				.queue_depth = 1024,
+				.max_file_size = 0,
 				.batch_size = 1,
 				.buffered = false,
 				.async = false};

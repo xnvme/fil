@@ -49,13 +49,14 @@ filperf <device-uri>[,<device-uri>,...] [options]
 | Option | Default | Description |
 |---|---|---|
 | `--data-dir <name>` | _(none)_ | Root directory name containing class subdirectories |
-| `--backend <name>` | `aisio-cpu` | I/O backend: `aisio-cpu`, `aisio-gpu` _(unavailable)_, `posix`, `gds` |
+| `--backend <name>` | `aisio-cpu` | I/O backend: `aisio-cpu`, `aisio-gpu`, `posix`, `gds` |
 | `--mnt <path>` | `/mnt` | Mountpoint of the drive (for `posix` and `gds` backends) |
 | `--batch-size <n>` | `1` | Number of files per batch |
 | `--batches <n>` | `1` | Number of batches to read |
 | `--iosize <n>` | `4096` | Number of bytes per I/O (`aisio-cpu` and `aisio-gpu` only) |
 | `--queue-depth <n>` | `1024` | NVMe queue depth (`aisio-cpu` and `aisio-gpu` only) |
 | `--gpu-nqueues <n>` | `128` | Number of GPU queues (`aisio-gpu` only) |
+| `--max-file-size <n>` | _(derived)_ | Max file size in bytes; required for `aisio-cpu`/`aisio-gpu` to size the upcie heap |
 | `--buffered` | off | Disable `O_DIRECT` when using `posix` backend |
 | `--async` | off | Use async API when using `gds` backend |
 | `--summary` | off | Print I/O and dataset statistics after completion |
