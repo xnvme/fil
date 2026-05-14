@@ -16,6 +16,7 @@
 #ifndef __LIBFIL_H
 #define __LIBFIL_H
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 /**
@@ -36,6 +37,8 @@ struct fil_opts {
 	uint64_t iosize;      ///< The number of bytes per I/O
 	uint32_t gpu_nqueues; ///< The number of GPU queues to create
 	uint32_t queue_depth; ///< The NVMe queue depth
+	size_t max_file_size; ///< Max file size in bytes. Required for
+			      ///< aisio-cpu/aisio-gpu to size the upcie heap correctly.
 	uint32_t batch_size;  ///< The number of files per batch
 	bool buffered;	      ///< Whether to use O_DIRECT with POSIX
 	bool async;	      ///< Whether to use async API with GDS
