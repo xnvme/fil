@@ -3,7 +3,7 @@ project('fil', 'c',
   meson_version: '>=0.55.0',
   default_options: [
     'c_std=gnu11',
-    'warning_level=3',
+    'warning_level=2',
     'buildtype=release',
     'default_library=both',
     'b_staticpic=true',
