@@ -33,6 +33,27 @@ inode_cmp(const void *a, const void *b)
 	return strcmp(name_a, name_b);
 }
 
+// Opens a second handle on the device with the CUDA-backed upcie backend,
+// sizing its device heap to hold the batch. Used by the aisio-gpu and
+// aisio-p2p backends. On failure the caller still owns the primary handle.
+static int
+open_cuda_dev(const char *uri, size_t heap_size, struct xnvme_dev **out)
+{
+	struct xnvme_opts cuda_opts = xnvme_opts_default();
+	struct xnvme_dev *cuda_dev;
+
+	cuda_opts.be = "upcie-cuda";
+	cuda_opts.device_heap_size = heap_size;
+	cuda_dev = xnvme_dev_open(uri, &cuda_opts);
+	if (!cuda_dev) {
+		int err = errno;
+		fprintf(stderr, "xnvme_dev_open(upcie-cuda): %d\n", err);
+		return err;
+	}
+	*out = cuda_dev;
+	return 0;
+}
+
 static int
 _xnvme_setup(struct fil_iter *iter, struct fil_dev *device, const char *uri)
 {
@@ -60,6 +81,9 @@ _xnvme_setup(struct fil_iter *iter, struct fil_dev *device, const char *uri)
 		opts.be = "upcie";
 		opts.host_heap_size = heap_size;
 		iter->type = FIL_CPU;
+	} else if (strcmp(backend, "aisio-p2p") == 0) {
+		opts.be = "upcie";
+		iter->type = FIL_P2P;
 	} else if (strcmp(backend, "aisio-gpu") == 0) {
 		opts.be = "upcie";
 		iter->type = FIL_GPU;
@@ -94,15 +118,9 @@ _xnvme_setup(struct fil_iter *iter, struct fil_dev *device, const char *uri)
 	}
 
 	if (iter->type == FIL_GPU) {
-		struct xnvme_opts cuda_opts = xnvme_opts_default();
-
-		cuda_opts.be = "upcie-cuda";
-		cuda_opts.device_heap_size = heap_size;
-		device->cuda_dev = xnvme_dev_open(uri, &cuda_opts);
-		if (!device->cuda_dev) {
-			err = errno;
+		err = open_cuda_dev(uri, heap_size, &device->cuda_dev);
+		if (err) {
 			xnvme_dev_close(dev);
-			fprintf(stderr, "xnvme_dev_open(upcie-cuda): %d\n", err);
 			return err;
 		}
 		device->nsid = xnvme_dev_get_nsid(device->cuda_dev);
@@ -141,6 +159,20 @@ _xnvme_setup(struct fil_iter *iter, struct fil_dev *device, const char *uri)
 			fprintf(stderr, "cudaMemcpy(cuda_queues_dev): %d\n", err);
 			cudaFree(device->cuda_queues_dev);
 			goto gpu_err_destroy_queues;
+		}
+	} else if (iter->type == FIL_P2P) {
+		err = open_cuda_dev(uri, heap_size, &device->cuda_dev);
+		if (err) {
+			xnvme_dev_close(dev);
+			return err;
+		}
+		err = xnvme_queue_init(device->cuda_dev, iter->opts->queue_depth, 0,
+				       &device->queue);
+		if (err) {
+			xnvme_dev_close(device->cuda_dev);
+			xnvme_dev_close(dev);
+			fprintf(stderr, "xnvme_queue_init(): %d\n", err);
+			return err;
 		}
 	} else if (iter->type == FIL_CPU) {
 		err = xnvme_queue_init(dev, iter->opts->queue_depth, 0, &device->queue);
@@ -377,6 +409,7 @@ _alloc(struct fil_iter *iter, uint32_t n_buffers)
 		for (uint32_t j = 0; j < device->n_buffers; j++) {
 			switch (iter->type) {
 			case FIL_GPU:
+			case FIL_P2P:
 				device->buffers[j] =
 				    xnvme_buf_alloc(device->cuda_dev, iter->buffer_size);
 				break;
@@ -401,7 +434,7 @@ _alloc(struct fil_iter *iter, uint32_t n_buffers)
 			iter->output->buffers[j + i * device->n_buffers] = device->buffers[j];
 		}
 
-		if (iter->type == FIL_CPU) {
+		if (iter->type == FIL_CPU || iter->type == FIL_P2P) {
 			device->cpu_io = malloc(sizeof(struct fil_cpu_io));
 			if (!device->cpu_io) {
 				err = errno;
@@ -582,6 +615,13 @@ fil_term(struct fil_iter *iter)
 			cudaFree(device->gpu_io.cmds_dev);
 			free(device->gpu_io.prp1_base);
 			break;
+		case FIL_P2P:
+			for (uint32_t j = 0; j < device->n_buffers; j++) {
+				xnvme_buf_free(device->cuda_dev, device->buffers[j]);
+			}
+			xnvme_queue_term(device->queue);
+			xnvme_dev_close(device->cuda_dev);
+			break;
 		case FIL_CPU:
 			for (uint32_t j = 0; j < device->n_buffers; j++) {
 				xnvme_buf_free(device->dev, device->buffers[j]);
@@ -671,7 +711,8 @@ fil_init(struct fil_iter **iter, char **dev_uris, uint32_t n_devs, struct fil_op
 	}
 
 	if (!opts->max_file_size && (strcmp(opts->backend, "aisio-cpu") == 0 ||
-				     strcmp(opts->backend, "aisio-gpu") == 0)) {
+				     strcmp(opts->backend, "aisio-gpu") == 0 ||
+				     strcmp(opts->backend, "aisio-p2p") == 0)) {
 		fprintf(stderr, "--max-file-size is required for aisio backends\n");
 		return EINVAL;
 	}
@@ -747,6 +788,7 @@ fil_init(struct fil_iter **iter, char **dev_uris, uint32_t n_devs, struct fil_op
 		case FIL_GPU:
 			_iter->io_fn = fil_gpu_submit;
 			break;
+		case FIL_P2P:
 		case FIL_CPU:
 			_iter->io_fn = fil_cpu_submit;
 			break;
