@@ -1,6 +1,6 @@
 BUILD_DIR ?= builddir
 
-.PHONY: all config config-debug build install clean
+.PHONY: all config config-debug config-subtime build install clean
 
 all: config build install
 
@@ -9,6 +9,9 @@ config:
 
 config-debug:
 	meson setup $(BUILD_DIR) --buildtype=debug
+
+config-subtime:
+	meson setup $(BUILD_DIR) -Dsubtime=true
 
 build:
 	meson compile -C $(BUILD_DIR)

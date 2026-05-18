@@ -199,7 +199,12 @@ main(int argc, char *argv[])
 		printf("\nIO stats:\n");
 		printf("\tTotal time: %lf\n", elapsed);
 		printf("\tPrep time: %lf\n", stats->prep_time);
+		printf("\t  Prep meta: %lf\n", stats->prep_meta_time);
+		printf("\t  Prep cmds: %lf\n", stats->prep_cmds_time);
 		printf("\tIO time: %lf\n", stats->io_time);
+		printf("\t  IO memcpy: %lf\n", stats->io_memcpy_time);
+		printf("\t  IO sync: %lf\n", stats->io_sync_time);
+		printf("\t    IO kernel: %lf\n", stats->io_kernel_time);
 		if (opts.data_dir[0] == '\0') {
 			printf("\t -- SYNTHETIC NUMBERS EXCLUDING PREP TIME -- \n");
 			time = stats->io_time;

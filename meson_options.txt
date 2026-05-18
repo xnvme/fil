@@ -1,0 +1,2 @@
+option('subtime', type: 'boolean', value: false,
+  description: 'Enable sub-times in fil_gpu_submit (prep_meta/prep_cmds/io_memcpy/io_sync/io_kernel) beneath the always-on prep_time and io_time')

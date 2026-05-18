@@ -6,12 +6,12 @@
 #include <fcntl.h>
 #include <stdint.h>
 #include <string.h>
-#include <time.h>
 #include <unistd.h>
 
 #include <libfil.h>
 #include <fil_io.h>
 #include <fil_iter.h>
+#include <fil_time.h>
 #include <fil_util.h>
 
 #include <libxal.h>
@@ -19,9 +19,6 @@
 
 #include <cuda_runtime.h>
 #include <cufile.h>
-
-#define ELAPSED(s, e) \
-	((double)((e).tv_sec - (s).tv_sec) + (double)((e).tv_nsec - (s).tv_nsec) / 1e9)
 
 struct _range {
 	uint64_t slba;
@@ -270,6 +267,7 @@ fil_gpu_submit(struct fil_iter *iter)
 	}
 
 	clock_gettime(CLOCK_MONOTONIC_RAW, &start);
+	FIL_TIME_BEGIN(iter);
 	for (uint32_t i = 0; i < iter->opts->batch_size; i++) {
 		dev_id = i % iter->n_devs;
 		device = iter->devs[dev_id];
@@ -277,6 +275,7 @@ fil_gpu_submit(struct fil_iter *iter)
 		offset = 0;
 
 		file = fil_next_file(iter, device, dev_id, buf_id, &dir);
+		FIL_TIME_TICK(iter, prep_meta_time);
 
 		for (uint32_t j = 0; j < file.content.extents.count; j++) {
 			extent = file.content.extents.extent[j];
@@ -303,6 +302,7 @@ fil_gpu_submit(struct fil_iter *iter)
 				offset++;
 			}
 		}
+		FIL_TIME_TICK(iter, prep_cmds_time);
 	}
 	clock_gettime(CLOCK_MONOTONIC_RAW, &end);
 	iter->stats->prep_time += ELAPSED(start, end);
@@ -312,6 +312,7 @@ fil_gpu_submit(struct fil_iter *iter)
 	}
 
 	clock_gettime(CLOCK_MONOTONIC_RAW, &start);
+	FIL_TIME_BEGIN(iter);
 	for (uint32_t i = 0; i < iter->n_devs; i++) {
 		device = iter->devs[i];
 
@@ -325,15 +326,27 @@ fil_gpu_submit(struct fil_iter *iter)
 			fprintf(stderr, "cudaMemcpy failed: %d\n", err);
 			return err;
 		}
+	}
+	FIL_TIME_TICK(iter, io_memcpy_time);
+	FIL_TIME_KERNEL_START(iter);
+	for (uint32_t i = 0; i < iter->n_devs; i++) {
+		struct fil_dev *device = iter->devs[i];
+
+		if (!device->gpu_io.n_io) {
+			continue;
+		}
 		gpu_io_launch(device->cuda_queues_dev, iter->opts->gpu_nqueues,
 			      device->gpu_io.cmds_dev, device->gpu_io.n_io,
 			      iter->opts->queue_depth);
 	}
+	FIL_TIME_KERNEL_END(iter);
 	err = cudaDeviceSynchronize();
 	if (err) {
 		fprintf(stderr, "cudaDeviceSynchronize failed: %d\n", err);
 		return err;
 	}
+	FIL_TIME_TICK(iter, io_sync_time);
+	FIL_TIME_KERNEL_ELAPSED(iter);
 	clock_gettime(CLOCK_MONOTONIC_RAW, &end);
 	iter->stats->io_time += ELAPSED(start, end);
 	return 0;
