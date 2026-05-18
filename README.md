@@ -57,6 +57,7 @@ filperf <device-uri>[,<device-uri>,...] [options]
 | `--queue-depth <n>` | `1024` | NVMe queue depth (`aisio-cpu` and `aisio-gpu` only) |
 | `--gpu-nqueues <n>` | `128` | Number of GPU queues (`aisio-gpu` only) |
 | `--max-file-size <n>` | _(required)_ | Max file size in bytes; required for the `aisio-cpu`/`aisio-gpu`/`aisio-p2p` backends to size the upcie heap |
+| `--warmup <n>` | `0` | Un-timed batches to run before starting the measurement window |
 | `--buffered` | off | Disable `O_DIRECT` when using `posix` backend |
 | `--async` | off | Use async API when using `gds` backend |
 | `--summary` | off | Print I/O and dataset statistics after completion |

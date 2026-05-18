@@ -10,6 +10,7 @@
 struct fil_cli_args {
 	char *dev_uris;
 	uint32_t batches;
+	uint32_t warmup;
 	uint32_t n_devs;
 	bool summary;
 };
@@ -35,6 +36,8 @@ print_help(const char *name)
 	fprintf(stderr,
 		"\t --batch-size \t | \t The number of files to read per batch (default = 1)\n");
 	fprintf(stderr, "\t --batches \t | \t The number of batches to read (default = 1)\n");
+	fprintf(stderr, "\t --warmup \t | \t The number of un-timed warmup batches to read before "
+			"the timed run (default = 0)\n");
 	fprintf(stderr, "\t --buffered \t | \t Don't open with O_DIRECT when using POSIX\n");
 	fprintf(stderr, "\t --async \t | \t Use the async API when using GDS\n");
 	fprintf(stderr, "\t --summary \t | \t Print IO and dataset stats\n");
@@ -92,6 +95,13 @@ parse_args(int argc, char *argv[], struct fil_cli_args *args, struct fil_opts *o
 				fprintf(stderr, "Invalid number of batches: %s\n", argv[i]);
 				return -EINVAL;
 			}
+		} else if (strcmp(argv[i], "--warmup") == 0) {
+			long w = strtol(argv[++i], (char **)NULL, 10);
+			if (w < 0) {
+				fprintf(stderr, "Invalid number of warmup batches: %s\n", argv[i]);
+				return -EINVAL;
+			}
+			args->warmup = (uint32_t)w;
 		} else if (strcmp(argv[i], "--buffered") == 0) {
 			opts->buffered = true;
 		} else if (strcmp(argv[i], "--async") == 0) {
@@ -161,6 +171,24 @@ main(int argc, char *argv[])
 		return err;
 	}
 	stats = fil_get_stats(iter);
+
+	if (args.warmup) {
+		// Snapshot the freshly-initialized stats (dataset fields populated,
+		// IO/timing counters still zero) so we can restore them after the
+		// warmup batches, dropping the warmup IO without enumerating fields.
+		struct fil_stats pre_warmup = *stats;
+
+		for (uint32_t i = 0; i < args.warmup; i++) {
+			err = fil_next(iter, &output);
+			if (err) {
+				fprintf(stderr, "Warmup batch failed, err: %d\n", err);
+				fil_term(iter);
+				return err;
+			}
+		}
+		*stats = pre_warmup;
+	}
+
 	printf("Time, Batches, IOPS, MiB/s\n");
 	clock_gettime(CLOCK_MONOTONIC_RAW, &total_start);
 	clock_gettime(CLOCK_MONOTONIC_RAW, &inter_start);
