@@ -52,6 +52,11 @@ struct fil_stats {
 	uint64_t io;		///< Total number of commands sent
 	double io_time;		///< The total time spent doing IO
 	double prep_time;	/// The total time spent preparing for doing IO
+	double prep_meta_time;	///< GPU prep: outer-loop metadata lookups
+	double prep_cmds_time;	///< GPU prep: inner cmd-building writes to pinned mem
+	double io_memcpy_time;	///< GPU IO: cudaMemcpy H->D of cmds
+	double io_sync_time;	///< GPU IO: kernel launch + cudaDeviceSynchronize
+	double io_kernel_time;	///< GPU IO: kernel execution time (from cudaEvents)
 	uint64_t n_files;	///< Number of files in the dataset
 	uint64_t max_file_size; ///< Maximum size of files in the dataset
 	double avg_file_size;	///< Average size of files in the dataset

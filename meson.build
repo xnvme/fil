@@ -13,6 +13,10 @@ project('fil', 'c', 'cuda',
 # Targets the local GPU architecture; change for cross-arch builds
 add_project_arguments('-arch=native', language: 'cuda')
 
+if get_option('subtime')
+  add_project_arguments('-DFIL_SUBTIME=1', language: 'c')
+endif
+
 pkg = import('pkgconfig')
 cc = meson.get_compiler('c')
 

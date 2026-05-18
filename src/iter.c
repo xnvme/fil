@@ -5,6 +5,7 @@
 #include <libfil.h>
 #include <fil_io.h>
 #include <fil_iter.h>
+#include <fil_time.h>
 #include <fil_util.h>
 
 #include <cuda_runtime.h>
@@ -598,6 +599,7 @@ _alloc(struct fil_iter *iter, uint32_t n_buffers)
 void
 fil_term(struct fil_iter *iter)
 {
+	FIL_TIME_FREE(iter);
 	for (uint32_t i = 0; i < iter->n_devs; i++) {
 		struct fil_dev *device = iter->devs[i];
 		switch (iter->type) {
@@ -787,6 +789,11 @@ fil_init(struct fil_iter **iter, char **dev_uris, uint32_t n_devs, struct fil_op
 		switch (_iter->type) {
 		case FIL_GPU:
 			_iter->io_fn = fil_gpu_submit;
+			err = FIL_TIME_ALLOC(_iter);
+			if (err) {
+				fil_term(_iter);
+				return err;
+			}
 			break;
 		case FIL_P2P:
 		case FIL_CPU:

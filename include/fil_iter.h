@@ -8,6 +8,8 @@
 
 enum fil_type { FIL_GPU, FIL_CPU, FIL_FILE, FIL_P2P };
 
+struct fil_time;
+
 struct fil_dev {
 	struct xnvme_dev *dev;
 	struct xnvme_dev *cuda_dev;
@@ -34,6 +36,7 @@ struct fil_iter {
 	struct fil_output *output;
 	struct fil_gds_io *gds_io;
 	int (*io_fn)(struct fil_iter *iter);
+	struct fil_time *time;
 	uint64_t buffer_size;
 	uint32_t n_devs;
 	enum fil_type type;
