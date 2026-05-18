@@ -23,6 +23,7 @@ meson-private/
 *.swo
 .DS_Store
 .clangd
+.claude/
 
 # CTags/TAGS
 tags
