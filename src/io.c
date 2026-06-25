@@ -20,8 +20,6 @@
 #include <cuda_runtime.h>
 #include <cufile.h>
 
-#define GPU_WARPSIZE 32
-
 #define ELAPSED(s, e) \
 	((double)((e).tv_sec - (s).tv_sec) + (double)((e).tv_nsec - (s).tv_nsec) / 1e9)
 
