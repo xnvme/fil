@@ -144,10 +144,39 @@ _io_range_submit(struct xnvme_queue *queue, uint32_t opc, uint64_t *slbas, uint6
 	return err;
 }
 
+/**
+ * Pull the next file from the shuffled dataset, resolve its directory and inode,
+ * and record its length, label and byte count into the output and stats. Returns
+ * the file inode and writes the parent directory inode to *dir.
+ */
+static struct xal_inode
+fil_next_file(struct fil_iter *iter, struct fil_dev *device, uint32_t dev_id, uint32_t buf_id,
+	      struct xal_inode *dir)
+{
+	struct fil_entry entry = iter->data->entries[iter->data->index++ % iter->data->n_entries];
+	uint32_t slot = buf_id + dev_id * device->n_buffers;
+	struct xal_inode file;
+
+	*dir = device->root_inode->content.dentries.inodes[entry.dir];
+	file = dir->content.dentries.inodes[entry.file];
+
+	iter->output->buf_len[slot] = file.size;
+	iter->output->labels[slot] = entry.dir;
+	iter->stats->bytes += file.size;
+
+	return file;
+}
+
+/** Convert an extent's starting FS block to a device LBA. */
+static uint64_t
+fil_extent_slba(struct fil_dev *device, const struct xal_extent *extent, uint64_t blocksize)
+{
+	return xal_fsbno_offset(device->xal, extent->start_block) / blocksize;
+}
+
 int
 fil_cpu_submit(struct fil_iter *iter)
 {
-	struct fil_entry entry;
 	struct xal_inode dir;
 	struct xal_inode file;
 	struct xal_extent extent, next_extent;
@@ -164,23 +193,16 @@ fil_cpu_submit(struct fil_iter *iter)
 		nlb = iter->opts->iosize / blocksize - 1;
 
 		for (uint32_t j = 0; j < device->n_buffers; j++) {
-			entry = iter->data->entries[iter->data->index++ % iter->data->n_entries];
-
-			dir = device->root_inode->content.dentries.inodes[entry.dir];
-			file = dir.content.dentries.inodes[entry.file];
+			file = fil_next_file(iter, device, i, j, &dir);
 			extent = file.content.extents.extent[0];
-			device->cpu_io->slbas[j] =
-			    xal_fsbno_offset(device->xal, extent.start_block) / blocksize;
+			device->cpu_io->slbas[j] = fil_extent_slba(device, &extent, blocksize);
 
 			nbytes = extent.nblocks * xal_blksize;
 			nblocks = nbytes / blocksize;
-			iter->output->buf_len[j + i * device->n_buffers] = file.size;
-			iter->output->labels[j + i * device->n_buffers] = entry.dir;
 
 			for (uint32_t k = 1; k < file.content.extents.count; k++) {
 				next_extent = file.content.extents.extent[k];
-				next_slba = xal_fsbno_offset(device->xal, next_extent.start_block) /
-					    blocksize;
+				next_slba = fil_extent_slba(device, &next_extent, blocksize);
 				if (next_slba != device->cpu_io->slbas[j] + nblocks) {
 					fprintf(
 					    stderr,
@@ -197,7 +219,6 @@ fil_cpu_submit(struct fil_iter *iter)
 			}
 			device->cpu_io->elbas[j] = device->cpu_io->slbas[j] + nblocks - 1;
 			iter->stats->io += nblocks / (nlb + 1);
-			iter->stats->bytes += file.size;
 		}
 		clock_gettime(CLOCK_MONOTONIC_RAW, &end);
 		iter->stats->prep_time += ELAPSED(start, end);
@@ -226,7 +247,6 @@ fil_gpu_submit(struct fil_iter *FIL_UNUSED(iter))
 int
 fil_file_submit(struct fil_iter *iter)
 {
-	struct fil_entry entry;
 	struct xal_inode dir;
 	struct xal_inode file;
 	struct timespec start, end;
@@ -256,13 +276,7 @@ fil_file_submit(struct fil_iter *iter)
 		bounce = device->file_io->buffer;
 		xal_blksize = xal_get_sb_blocksize(device->xal);
 
-		entry = iter->data->entries[iter->data->index++ % iter->data->n_entries];
-		dir = device->root_inode->content.dentries.inodes[entry.dir];
-		file = dir.content.dentries.inodes[entry.file];
-
-		iter->output->buf_len[buf_id + dev_id * device->n_buffers] = file.size;
-		iter->output->labels[buf_id + dev_id * device->n_buffers] = entry.dir;
-		iter->stats->bytes += file.size;
+		file = fil_next_file(iter, device, dev_id, buf_id, &dir);
 		iter->stats->io++;
 
 		memcpy(path, prefix, strlen(prefix) + 1);
@@ -352,7 +366,6 @@ fil_file_submit(struct fil_iter *iter)
 int
 fil_gds_async_submit(struct fil_iter *iter)
 {
-	struct fil_entry entry;
 	struct xal_inode dir;
 	struct xal_inode file;
 	struct timespec start, end;
@@ -374,13 +387,7 @@ fil_gds_async_submit(struct fil_iter *iter)
 		prefix = device->file_io->prefix;
 		path = device->file_io->path;
 
-		entry = iter->data->entries[iter->data->index++ % iter->data->n_entries];
-		dir = device->root_inode->content.dentries.inodes[entry.dir];
-		file = dir.content.dentries.inodes[entry.file];
-
-		iter->output->buf_len[buf_id + dev_id * device->n_buffers] = file.size;
-		iter->output->labels[buf_id + dev_id * device->n_buffers] = entry.dir;
-		iter->stats->bytes += file.size;
+		file = fil_next_file(iter, device, dev_id, buf_id, &dir);
 		iter->stats->io++;
 
 		memcpy(path, prefix, strlen(prefix) + 1);
