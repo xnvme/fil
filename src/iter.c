@@ -572,6 +572,7 @@ fil_init(struct fil_iter **iter, char **dev_uris, uint32_t n_devs, struct fil_op
 		err = _xnvme_setup(_iter, device, dev_uris[i]);
 		if (err) {
 			fprintf(stderr, "xNVMe setup failed for %s: %d\n", dev_uris[i], err);
+			free(device);
 			fil_term(_iter);
 			return err;
 		}
@@ -580,6 +581,7 @@ fil_init(struct fil_iter **iter, char **dev_uris, uint32_t n_devs, struct fil_op
 			if (err) {
 				fprintf(stderr, "XAL setup failed for %s: %d\n", dev_uris[i], err);
 				xnvme_dev_close(device->dev);
+				free(device);
 				fil_term(_iter);
 				return err;
 			}
