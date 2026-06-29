@@ -154,8 +154,9 @@ fil_next_file(struct fil_iter *iter, struct fil_dev *device, uint32_t dev_id, ui
 	uint32_t slot = buf_id + dev_id * device->n_buffers;
 	struct xal_inode file;
 
-	*dir = device->root_inode->content.dentries.inodes[entry.dir];
-	file = dir->content.dentries.inodes[entry.file];
+	*dir = *xal_inode_at(device->xal,
+			     device->root_inode->content.dentries.inodes_idx + entry.dir);
+	file = *xal_inode_at(device->xal, dir->content.dentries.inodes_idx + entry.file);
 
 	iter->output->buf_len[slot] = file.size;
 	iter->output->labels[slot] = entry.dir;
@@ -191,14 +192,15 @@ fil_cpu_submit(struct fil_iter *iter)
 
 		for (uint32_t j = 0; j < device->n_buffers; j++) {
 			file = fil_next_file(iter, device, i, j, &dir);
-			extent = file.content.extents.extent[0];
+			extent = *xal_extent_at(device->xal, file.content.extents.extent_idx);
 			device->cpu_io->slbas[j] = fil_extent_slba(device, &extent, blocksize);
 
 			nbytes = extent.nblocks * xal_blksize;
 			nblocks = nbytes / blocksize;
 
 			for (uint32_t k = 1; k < file.content.extents.count; k++) {
-				next_extent = file.content.extents.extent[k];
+				next_extent = *xal_extent_at(device->xal,
+							     file.content.extents.extent_idx + k);
 				next_slba = fil_extent_slba(device, &next_extent, blocksize);
 				if (next_slba != device->cpu_io->slbas[j] + nblocks) {
 					fprintf(
@@ -278,7 +280,7 @@ fil_gpu_submit(struct fil_iter *iter)
 		FIL_TIME_TICK(iter, prep_meta_time);
 
 		for (uint32_t j = 0; j < file.content.extents.count; j++) {
-			extent = file.content.extents.extent[j];
+			extent = *xal_extent_at(device->xal, file.content.extents.extent_idx + j);
 			slba = fil_extent_slba(device, &extent, blocksizes[dev_id]);
 			nbytes = extent.nblocks * xal_blksizes[dev_id];
 			nblocks = nbytes / blocksizes[dev_id];
