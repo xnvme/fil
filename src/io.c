@@ -144,23 +144,28 @@ _io_range_submit(struct xnvme_queue *queue, uint32_t opc, uint64_t *slbas, uint6
 /**
  * Pull the next file from the shuffled dataset, resolve its directory and inode,
  * and record its length, label and byte count into the output and stats. Returns
- * the file inode and writes the parent directory inode to *dir.
+ * the file inode and, if dir is non-NULL, writes the parent directory inode to
+ * *dir. The returned pointers reference the device's xal pool, which is stable
+ * for the lifetime of the iterator.
  */
-static struct xal_inode
+static struct xal_inode *
 fil_next_file(struct fil_iter *iter, struct fil_dev *device, uint32_t dev_id, uint32_t buf_id,
-	      struct xal_inode *dir)
+	      struct xal_inode **dir)
 {
 	struct fil_entry entry = iter->data->entries[iter->data->index++ % iter->data->n_entries];
 	uint32_t slot = buf_id + dev_id * device->n_buffers;
-	struct xal_inode file;
+	struct xal_inode *dir_inode, *file;
 
-	*dir = *xal_inode_at(device->xal,
-			     device->root_inode->content.dentries.inodes_idx + entry.dir);
-	file = *xal_inode_at(device->xal, dir->content.dentries.inodes_idx + entry.file);
+	dir_inode = xal_inode_at(device->xal,
+				 device->root_inode->content.dentries.inodes_idx + entry.dir);
+	if (dir) {
+		*dir = dir_inode;
+	}
+	file = xal_inode_at(device->xal, dir_inode->content.dentries.inodes_idx + entry.file);
 
-	iter->output->buf_len[slot] = file.size;
+	iter->output->buf_len[slot] = file->size;
 	iter->output->labels[slot] = entry.dir;
-	iter->stats->bytes += file.size;
+	iter->stats->bytes += file->size;
 
 	return file;
 }
@@ -175,8 +180,7 @@ fil_extent_slba(struct fil_dev *device, const struct xal_extent *extent, uint64_
 int
 fil_cpu_submit(struct fil_iter *iter)
 {
-	struct xal_inode dir;
-	struct xal_inode file;
+	struct xal_inode *dir, *file;
 	struct xal_extent extent, next_extent;
 	uint64_t nblocks, nbytes, blocksize, next_slba;
 	uint32_t xal_blksize, nlb;
@@ -192,21 +196,21 @@ fil_cpu_submit(struct fil_iter *iter)
 
 		for (uint32_t j = 0; j < device->n_buffers; j++) {
 			file = fil_next_file(iter, device, i, j, &dir);
-			extent = *xal_extent_at(device->xal, file.content.extents.extent_idx);
+			extent = *xal_extent_at(device->xal, file->content.extents.extent_idx);
 			device->cpu_io->slbas[j] = fil_extent_slba(device, &extent, blocksize);
 
 			nbytes = extent.nblocks * xal_blksize;
 			nblocks = nbytes / blocksize;
 
-			for (uint32_t k = 1; k < file.content.extents.count; k++) {
+			for (uint32_t k = 1; k < file->content.extents.count; k++) {
 				next_extent = *xal_extent_at(device->xal,
-							     file.content.extents.extent_idx + k);
+							     file->content.extents.extent_idx + k);
 				next_slba = fil_extent_slba(device, &next_extent, blocksize);
 				if (next_slba != device->cpu_io->slbas[j] + nblocks) {
 					fprintf(
 					    stderr,
 					    "File: %s, in dir: %s, has non contiguous extents\n",
-					    file.name, dir.name);
+					    file->name, dir->name);
 					fprintf(stderr,
 						"extent[%d].elba: %lu, extent[%d].slba: %lu\n",
 						k - 1, device->cpu_io->slbas[j] + nblocks - 1, k,
@@ -240,7 +244,7 @@ fil_cpu_submit(struct fil_iter *iter)
 int
 fil_gpu_submit(struct fil_iter *iter)
 {
-	struct xal_inode dir, file;
+	struct xal_inode *file;
 	struct xal_extent extent;
 	struct timespec start, end;
 	struct fil_dev *device;
@@ -276,11 +280,11 @@ fil_gpu_submit(struct fil_iter *iter)
 		buf_id = device->buf++ % device->n_buffers;
 		offset = 0;
 
-		file = fil_next_file(iter, device, dev_id, buf_id, &dir);
+		file = fil_next_file(iter, device, dev_id, buf_id, NULL);
 		FIL_TIME_TICK(iter, prep_meta_time);
 
-		for (uint32_t j = 0; j < file.content.extents.count; j++) {
-			extent = *xal_extent_at(device->xal, file.content.extents.extent_idx + j);
+		for (uint32_t j = 0; j < file->content.extents.count; j++) {
+			extent = *xal_extent_at(device->xal, file->content.extents.extent_idx + j);
 			slba = fil_extent_slba(device, &extent, blocksizes[dev_id]);
 			nbytes = extent.nblocks * xal_blksizes[dev_id];
 			nblocks = nbytes / blocksizes[dev_id];
@@ -292,7 +296,7 @@ fil_gpu_submit(struct fil_iter *iter)
 					fprintf(stderr,
 						"File %s exceeds --max-file-size; "
 						"increase it to fit the largest file\n",
-						file.name);
+						file->name);
 					return EINVAL;
 				}
 
@@ -357,8 +361,7 @@ fil_gpu_submit(struct fil_iter *iter)
 int
 fil_file_submit(struct fil_iter *iter)
 {
-	struct xal_inode dir;
-	struct xal_inode file;
+	struct xal_inode *dir, *file;
 	struct timespec start, end;
 	CUfileError_t status;
 	CUfileDescr_t descr;
@@ -391,14 +394,14 @@ fil_file_submit(struct fil_iter *iter)
 
 		memcpy(path, prefix, strlen(prefix) + 1);
 		strcat(path, "/");
-		strcat(path, dir.name);
+		strcat(path, dir->name);
 		strcat(path, "/");
-		strcat(path, file.name);
+		strcat(path, file->name);
 
-		nbytes = file.size;
+		nbytes = file->size;
 		if (!is_gds && !iter->opts->buffered) {
 			// POSIX O_DIRECT requires aligned nbytes
-			nbytes = (1 + ((file.size - 1) / xal_blksize)) * xal_blksize;
+			nbytes = (1 + ((file->size - 1) / xal_blksize)) * xal_blksize;
 		}
 
 		fd = open(path, flags);
@@ -437,7 +440,7 @@ fil_file_submit(struct fil_iter *iter)
 				fprintf(
 				    stderr,
 				    "Could not read entire file %s, expected: %lu, actual: %ld\n",
-				    path, file.size, bytes_read);
+				    path, file->size, bytes_read);
 				return EIO;
 			}
 			cuFileHandleDeregister(fh);
@@ -453,13 +456,13 @@ fil_file_submit(struct fil_iter *iter)
 					fprintf(stderr,
 						"Could not read entire file %s, expected: %lu, "
 						"actual: %ld\n",
-						path, file.size, bytes_read);
+						path, file->size, bytes_read);
 					return EIO;
 				}
 				bytes_read += err;
-			} while ((uint64_t)bytes_read != file.size);
+			} while ((uint64_t)bytes_read != file->size);
 
-			err = cudaMemcpy(buffer, bounce, file.size, cudaMemcpyHostToDevice);
+			err = cudaMemcpy(buffer, bounce, file->size, cudaMemcpyHostToDevice);
 			if (err) {
 				fprintf(stderr, "Could not copy data to GPU memory, err: %ld\n",
 					err);
@@ -476,8 +479,7 @@ fil_file_submit(struct fil_iter *iter)
 int
 fil_gds_async_submit(struct fil_iter *iter)
 {
-	struct xal_inode dir;
-	struct xal_inode file;
+	struct xal_inode *dir, *file;
 	struct timespec start, end;
 	struct fil_gds_io *gds_io;
 	CUfileError_t status;
@@ -502,9 +504,9 @@ fil_gds_async_submit(struct fil_iter *iter)
 
 		memcpy(path, prefix, strlen(prefix) + 1);
 		strcat(path, "/");
-		strcat(path, dir.name);
+		strcat(path, dir->name);
 		strcat(path, "/");
-		strcat(path, file.name);
+		strcat(path, file->name);
 
 		flags = O_RDONLY | O_DIRECT;
 
@@ -524,7 +526,7 @@ fil_gds_async_submit(struct fil_iter *iter)
 			close(fd);
 			return status.err;
 		}
-		gds_io->expected[i] = file.size;
+		gds_io->expected[i] = file->size;
 		gds_io->actual[i] = 0;
 
 		status = cuFileReadAsync(gds_io->handle[i], buffer, &gds_io->expected[i], &offset, &offset, &gds_io->actual[i],
