@@ -230,12 +230,12 @@ find_data_dir(struct xal *FIL_UNUSED(xal), struct xal_inode *inode, void *cb_arg
 }
 
 static void
-path_prepend(char *path, struct xal_inode *node)
+path_prepend(struct xal *xal, char *path, struct xal_inode *node)
 {
 	if (node->name[0] == '\0') {
 		return;
 	}
-	path_prepend(path, node->parent);
+	path_prepend(xal, path, xal_inode_at(xal, node->parent_idx));
 	strcat(path, "/");
 	strcat(path, node->name);
 }
@@ -249,7 +249,7 @@ _find_prefix(struct fil_iter *iter)
 		device = iter->devs[i];
 		prefix = device->file_io->prefix;
 		strcpy(prefix, iter->opts->mnt);
-		path_prepend(prefix, device->root_inode);
+		path_prepend(device->xal, prefix, device->root_inode);
 	}
 }
 
@@ -321,7 +321,7 @@ _xal_setup(struct fil_iter *iter, struct fil_dev *device)
 
 	// Sort the directories so we can derive labels
 	if (device->root_inode->content.dentries.count > 1) {
-		qsort(device->root_inode->content.dentries.inodes,
+		qsort(xal_inode_at(xal, device->root_inode->content.dentries.inodes_idx),
 		      device->root_inode->content.dentries.count, sizeof(struct xal_inode),
 		      inode_cmp);
 	}
@@ -333,13 +333,17 @@ static int
 _create_entries(struct fil_iter *iter)
 {
 	struct fil_entry *entries;
+	struct xal_inode *inode;
+	struct xal *xal = iter->devs[0]->xal;
 	struct xal_dentries root_dentries = iter->devs[0]->root_inode->content.dentries;
 	uint64_t n_entries = 0;
+	uint32_t n_files;
 	int err;
 	int k;
 
 	for (uint32_t i = 0; i < root_dentries.count; i++) {
-		n_entries += root_dentries.inodes[i].content.dentries.count;
+		inode = xal_inode_at(xal, root_dentries.inodes_idx + i);
+		n_entries += inode->content.dentries.count;
 	}
 
 	entries = malloc(sizeof(struct fil_entry) * n_entries);
@@ -351,7 +355,10 @@ _create_entries(struct fil_iter *iter)
 
 	k = 0;
 	for (uint32_t i = 0; i < root_dentries.count; i++) {
-		for (uint32_t j = 0; j < root_dentries.inodes[i].content.dentries.count; j++) {
+		inode = xal_inode_at(xal, root_dentries.inodes_idx + i);
+		n_files = inode->content.dentries.count;
+
+		for (uint32_t j = 0; j < n_files; j++) {
 			entries[k].dir = i;
 			entries[k].file = j;
 			k++;
