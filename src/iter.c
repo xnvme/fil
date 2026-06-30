@@ -91,7 +91,7 @@ _xnvme_setup(struct fil_iter *iter, struct fil_dev *device, const char *uri)
 	} else if (strcmp(backend, "posix") == 0) {
 		opts.be = "linux";
 		iter->type = FIL_FILE;
-	} else if (strcmp(backend, "gds") == 0) {
+	} else if (strcmp(backend, "cufile") == 0) {
 		opts.be = "linux";
 		iter->type = FIL_FILE;
 		status = cuFileDriverOpen();
@@ -539,50 +539,50 @@ _alloc(struct fil_iter *iter, uint32_t n_buffers)
 	}
 
 	if (iter->opts->async) {
-		iter->gds_io = malloc(sizeof(struct fil_gds_io));
-		if (!iter->gds_io) {
+		iter->cufile_io = malloc(sizeof(struct fil_cufile_io));
+		if (!iter->cufile_io) {
 			err = errno;
-			fprintf(stderr, "Could not allocate GDS IO struct: %d\n", err);
+			fprintf(stderr, "Could not allocate cuFile IO struct: %d\n", err);
 			return err;
 		}
 
-		iter->gds_io->descr = malloc(sizeof(CUfileDescr_t) * iter->opts->batch_size);
-		if (!iter->gds_io->descr) {
+		iter->cufile_io->descr = malloc(sizeof(CUfileDescr_t) * iter->opts->batch_size);
+		if (!iter->cufile_io->descr) {
 			err = errno;
 			fprintf(stderr, "Could not allocate cuFile descriptors: %d\n", err);
 			return err;
 		}
 
-		iter->gds_io->handle = malloc(sizeof(CUfileHandle_t) * iter->opts->batch_size);
-		if (!iter->gds_io->handle) {
+		iter->cufile_io->handle = malloc(sizeof(CUfileHandle_t) * iter->opts->batch_size);
+		if (!iter->cufile_io->handle) {
 			err = errno;
 			fprintf(stderr, "Could not allocate cuFile handles: %d\n", err);
 			return err;
 		}
 
-		iter->gds_io->expected = malloc(sizeof(size_t) * iter->opts->batch_size);
-		if (!iter->gds_io->expected) {
+		iter->cufile_io->expected = malloc(sizeof(size_t) * iter->opts->batch_size);
+		if (!iter->cufile_io->expected) {
 			err = errno;
 			fprintf(stderr, "Could not allocate array of expected values: %d\n", err);
 			return err;
 		}
 
-		iter->gds_io->actual = malloc(sizeof(ssize_t) * iter->opts->batch_size);
-		if (!iter->gds_io->actual) {
+		iter->cufile_io->actual = malloc(sizeof(ssize_t) * iter->opts->batch_size);
+		if (!iter->cufile_io->actual) {
 			err = errno;
 			fprintf(stderr, "Could not allocate array of actual values: %d\n", err);
 			return err;
 		}
 
-		iter->gds_io->streams = malloc(sizeof(cudaStream_t) * iter->opts->batch_size);
-		if (!iter->gds_io->streams) {
+		iter->cufile_io->streams = malloc(sizeof(cudaStream_t) * iter->opts->batch_size);
+		if (!iter->cufile_io->streams) {
 			err = errno;
 			fprintf(stderr, "Could not allocate array of CUDA Streams: %d\n", err);
 			return err;
 		}
 
 		for (uint32_t i = 0; i < iter->opts->batch_size; i++) {
-			err = cudaStreamCreateWithFlags(&iter->gds_io->streams[i],
+			err = cudaStreamCreateWithFlags(&iter->cufile_io->streams[i],
 							cudaStreamNonBlocking);
 			if (err) {
 				fprintf(stderr, "Could not setup CUDA Stream, err: %d\n", err);
@@ -656,15 +656,15 @@ fil_term(struct fil_iter *iter)
 		free(device->buffers);
 		free(device);
 	}
-	if (iter->gds_io) {
-		free(iter->gds_io->descr);
-		free(iter->gds_io->handle);
-		free(iter->gds_io->expected);
-		free(iter->gds_io->actual);
+	if (iter->cufile_io) {
+		free(iter->cufile_io->descr);
+		free(iter->cufile_io->handle);
+		free(iter->cufile_io->expected);
+		free(iter->cufile_io->actual);
 		for (uint32_t i = 0; i < iter->opts->batch_size; i++) {
-			cudaStreamDestroy(iter->gds_io->streams[i]);
+			cudaStreamDestroy(iter->cufile_io->streams[i]);
 		}
-		free(iter->gds_io->streams);
+		free(iter->cufile_io->streams);
 	}
 	if (iter->data) {
 		free(iter->data->entries);
@@ -713,8 +713,8 @@ fil_init(struct fil_iter **iter, char **dev_uris, uint32_t n_devs, struct fil_op
 		return EINVAL;
 	}
 
-	if (opts->async && strcmp(opts->backend, "gds") != 0) {
-		fprintf(stderr, "opts->async == true is only compatible with GDS backend");
+	if (opts->async && strcmp(opts->backend, "cufile") != 0) {
+		fprintf(stderr, "opts->async == true is only compatible with cuFile backend");
 		return EINVAL;
 	}
 
@@ -808,7 +808,7 @@ fil_init(struct fil_iter **iter, char **dev_uris, uint32_t n_devs, struct fil_op
 			break;
 		case FIL_FILE:
 			if (_iter->opts->async) {
-				_iter->io_fn = fil_gds_async_submit;
+				_iter->io_fn = fil_cufile_async_submit;
 			} else {
 				_iter->io_fn = fil_file_submit;
 			}

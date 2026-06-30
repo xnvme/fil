@@ -41,7 +41,7 @@ struct fil_opts {
 			      ///< aisio-p2p backends to size the upcie heap correctly.
 	uint32_t batch_size; ///< The number of files per batch
 	bool buffered;       ///< Whether to use O_DIRECT with POSIX
-	bool async;          ///< Whether to use async API with GDS
+	bool async;          ///< Whether to use async API with cuFile
 };
 
 /**
