@@ -1,6 +1,6 @@
 BUILD_DIR ?= builddir
 
-.PHONY: all config config-debug config-subtime build install clean
+.PHONY: all config config-debug config-subtime build install clean git-setup format format-all
 
 all: config build install
 
@@ -21,3 +21,16 @@ install:
 
 clean:
 	rm -rf $(BUILD_DIR)
+
+# Install the pre-commit git hooks
+git-setup:
+	./toolbox/pre-commit-check.sh
+	pre-commit install
+
+# Run code format/lint on staged changes
+format:
+	pre-commit run
+
+# Run code format/lint on all files
+format-all:
+	pre-commit run --all-files
