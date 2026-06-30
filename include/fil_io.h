@@ -28,7 +28,7 @@ struct fil_file_io {
 	void *buffer;
 };
 
-struct fil_gds_io {
+struct fil_cufile_io {
 	CUfileDescr_t *descr;
 	CUfileHandle_t *handle;
 	size_t *expected;
@@ -59,6 +59,6 @@ int
 fil_file_submit(struct fil_iter *iter);
 
 int
-fil_gds_async_submit(struct fil_iter *iter);
+fil_cufile_async_submit(struct fil_iter *iter);
 
 #endif

@@ -34,7 +34,7 @@ struct fil_iter {
 	struct fil_stats *stats;
 	struct fil_opts *opts;
 	struct fil_output *output;
-	struct fil_gds_io *gds_io;
+	struct fil_cufile_io *cufile_io;
 	int (*io_fn)(struct fil_iter *iter);
 	struct fil_time *time;
 	uint64_t buffer_size;

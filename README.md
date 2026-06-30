@@ -49,8 +49,8 @@ filperf <device-uri>[,<device-uri>,...] [options]
 | Option | Default | Description |
 |---|---|---|
 | `--data-dir <name>` | _(none)_ | Root directory name containing class subdirectories |
-| `--backend <name>` | `aisio-cpu` | I/O backend: `aisio-cpu`, `aisio-gpu`, `aisio-p2p`, `posix`, `gds` |
-| `--mnt <path>` | `/mnt` | Mountpoint of the drive (for `posix` and `gds` backends) |
+| `--backend <name>` | `aisio-cpu` | I/O backend: `aisio-cpu`, `aisio-gpu`, `aisio-p2p`, `posix`, `cufile` |
+| `--mnt <path>` | `/mnt` | Mountpoint of the drive (for `posix` and `cufile` backends) |
 | `--batch-size <n>` | `1` | Number of files per batch |
 | `--batches <n>` | `1` | Number of batches to read |
 | `--iosize <n>` | `4096` | Number of bytes per I/O (`aisio-cpu` and `aisio-gpu` only) |
@@ -59,7 +59,7 @@ filperf <device-uri>[,<device-uri>,...] [options]
 | `--max-file-size <n>` | _(required)_ | Max file size in bytes; required for the `aisio-cpu`/`aisio-gpu`/`aisio-p2p` backends to size the upcie heap |
 | `--warmup <n>` | `0` | Un-timed batches to run before starting the measurement window |
 | `--buffered` | off | Disable `O_DIRECT` when using `posix` backend |
-| `--async` | off | Use async API when using `gds` backend |
+| `--async` | off | Use async API when using `cufile` backend |
 | `--summary` | off | Print I/O and dataset statistics after completion |
 | `--help` | | Print usage |
 
@@ -88,8 +88,10 @@ Dataset stats:
 	Average size of files in the dataset (KiB): 109.862692
 ```
 
-`posix` and `gds` both require a block device path and the device mounted at `--mnt`.
-`gds` additionally requires CUDA with cuFile for direct NVMe-to-GPU transfers.
+`posix` and `cufile` both require a block device path and the device mounted at `--mnt`.
+`cufile` additionally requires CUDA with the cuFile library. Direct NVMe-to-GPU
+(GPUDirect Storage) transfers need the kernel-side GDS driver (`nvidia-fs`); without
+it, cuFile falls back to a compatibility path that stages through host memory.
 For these file-level backends, IOPS equals File/s since each file is a single I/O.
 
 ```
@@ -114,7 +116,7 @@ Dataset stats:
 ```
 
 ```
-$ filperf /dev/nvme0n1 --batches 10 --batch-size 1024 --backend gds --mnt /mnt/datasets --data-dir imagenetish --summary
+$ filperf /dev/nvme0n1 --batches 10 --batch-size 1024 --backend cufile --mnt /mnt/datasets --data-dir imagenetish --summary
 Time, Batches, IOPS, MiB/s
 1.255441, 4, 3262.598873, 348.563276
 2.413140, 8, 3538.085634, 381.345474

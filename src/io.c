@@ -370,9 +370,9 @@ fil_file_submit(struct fil_iter *iter)
 	char *prefix, *path;
 	int fd, flags;
 	ssize_t err, bytes_read;
-	bool is_gds = strcmp(iter->opts->backend, "gds") == 0;
+	bool is_cufile = strcmp(iter->opts->backend, "cufile") == 0;
 	flags = O_RDONLY;
-	if (is_gds || !iter->opts->buffered) {
+	if (is_cufile || !iter->opts->buffered) {
 		flags |= O_DIRECT;
 	}
 
@@ -397,7 +397,7 @@ fil_file_submit(struct fil_iter *iter)
 		strcat(path, file->name);
 
 		nbytes = file->size;
-		if (!is_gds && !iter->opts->buffered) {
+		if (!is_cufile && !iter->opts->buffered) {
 			// POSIX O_DIRECT requires aligned nbytes
 			nbytes = (1 + ((file->size - 1) / xal_blksize)) * xal_blksize;
 		}
@@ -409,7 +409,7 @@ fil_file_submit(struct fil_iter *iter)
 			return err;
 		}
 
-		if (is_gds) {
+		if (is_cufile) {
 			memset(&descr, 0, sizeof(CUfileDescr_t));
 			descr.handle.fd = fd;
 			descr.type = CU_FILE_HANDLE_TYPE_OPAQUE_FD;
@@ -426,7 +426,7 @@ fil_file_submit(struct fil_iter *iter)
 
 		clock_gettime(CLOCK_MONOTONIC_RAW, &start);
 		bytes_read = 0;
-		if (is_gds) {
+		if (is_cufile) {
 
 			bytes_read = cuFileRead(fh, buffer, nbytes, 0, 0);
 			if (bytes_read < 0) {
@@ -476,11 +476,11 @@ fil_file_submit(struct fil_iter *iter)
 }
 
 int
-fil_gds_async_submit(struct fil_iter *iter)
+fil_cufile_async_submit(struct fil_iter *iter)
 {
 	struct xal_inode *dir, *file;
 	struct timespec start, end;
-	struct fil_gds_io *gds_io;
+	struct fil_cufile_io *cufile_io;
 	CUfileError_t status;
 	uint32_t buf_id, dev_id;
 	void *buffer;
@@ -488,7 +488,7 @@ fil_gds_async_submit(struct fil_iter *iter)
 	int fd, flags, err = 0;
 	off_t offset = 0;
 
-	gds_io = iter->gds_io;
+	cufile_io = iter->cufile_io;
 	clock_gettime(CLOCK_MONOTONIC_RAW, &start);
 	for (uint32_t i = 0; i < iter->opts->batch_size; i++) {
 		dev_id = i % iter->n_devs;
@@ -516,20 +516,21 @@ fil_gds_async_submit(struct fil_iter *iter)
 			return err;
 		}
 
-		memset(&gds_io->descr[i], 0, sizeof(CUfileDescr_t));
-		gds_io->descr[i].handle.fd = fd;
-		gds_io->descr[i].type = CU_FILE_HANDLE_TYPE_OPAQUE_FD;
-		status = cuFileHandleRegister(&gds_io->handle[i], &gds_io->descr[i]);
+		memset(&cufile_io->descr[i], 0, sizeof(CUfileDescr_t));
+		cufile_io->descr[i].handle.fd = fd;
+		cufile_io->descr[i].type = CU_FILE_HANDLE_TYPE_OPAQUE_FD;
+		status = cuFileHandleRegister(&cufile_io->handle[i], &cufile_io->descr[i]);
 		if (status.err != CU_FILE_SUCCESS) {
 			fprintf(stderr, "Could not register file, err: %d\n", status.err);
 			close(fd);
 			return status.err;
 		}
-		gds_io->expected[i] = file->size;
-		gds_io->actual[i] = 0;
+		cufile_io->expected[i] = file->size;
+		cufile_io->actual[i] = 0;
 
-		status = cuFileReadAsync(gds_io->handle[i], buffer, &gds_io->expected[i], &offset,
-					 &offset, &gds_io->actual[i], gds_io->streams[i]);
+		status = cuFileReadAsync(cufile_io->handle[i], buffer, &cufile_io->expected[i],
+					 &offset, &offset, &cufile_io->actual[i],
+					 cufile_io->streams[i]);
 		if (status.err != CU_FILE_SUCCESS) {
 			fprintf(stderr, "cuFileReadAsync failed, err: %d\n", status.err);
 			err = status.err;
@@ -542,19 +543,19 @@ fil_gds_async_submit(struct fil_iter *iter)
 
 	clock_gettime(CLOCK_MONOTONIC_RAW, &start);
 	for (uint32_t i = 0; i < iter->opts->batch_size; i++) {
-		err = cudaStreamSynchronize(gds_io->streams[i]);
+		err = cudaStreamSynchronize(cufile_io->streams[i]);
 		if (err) {
 			fprintf(stderr, "Could not synchronize CUDA Stream, err: %d\n", err);
 			goto teardown;
 		}
-		if (gds_io->actual[i] < 0) {
-			err = gds_io->actual[i];
+		if (cufile_io->actual[i] < 0) {
+			err = cufile_io->actual[i];
 			fprintf(stderr, "Reading failed, err: %d\n", err);
 			goto teardown;
 		}
-		if ((size_t)gds_io->actual[i] != gds_io->expected[i]) {
+		if ((size_t)cufile_io->actual[i] != cufile_io->expected[i]) {
 			fprintf(stderr, "Could not read entire file, expected: %lu, actual: %lu\n",
-				gds_io->expected[i], gds_io->actual[i]);
+				cufile_io->expected[i], cufile_io->actual[i]);
 			err = EIO;
 			goto teardown;
 		}
@@ -564,8 +565,8 @@ fil_gds_async_submit(struct fil_iter *iter)
 
 teardown:
 	for (uint32_t i = 0; i < iter->opts->batch_size; i++) {
-		fd = gds_io->descr[i].handle.fd;
-		cuFileHandleDeregister(gds_io->handle[i]);
+		fd = cufile_io->descr[i].handle.fd;
+		cuFileHandleDeregister(cufile_io->handle[i]);
 		close(fd);
 	}
 	return err;

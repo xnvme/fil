@@ -26,9 +26,9 @@ print_help(const char *name)
 		"\t \t \t | \t The data-dir should be a name of a directory, not a path\n");
 	fprintf(stderr, "\t \t \t | \t The name of the data-dir should be unique\n");
 	fprintf(stderr, "\t --backend \t | \t The backend to use for reading files (aisio-cpu "
-			"[default], aisio-gpu, aisio-p2p, posix, gds)\n");
+			"[default], aisio-gpu, aisio-p2p, posix, cufile)\n");
 	fprintf(stderr, "\t --mnt \t \t | \t The mountpoint of the drive (default = /mnt). Only "
-			"relevant for backends: 'posix' and 'gds'\n");
+			"relevant for backends: 'posix' and 'cufile'\n");
 	fprintf(stderr, "\t --iosize \t | \t The number of bytes per I/O (default = 4096). Only "
 			"relevant for backends: 'aisio-cpu' and 'aisio-gpu'\n");
 	fprintf(stderr, "\t --gpu-nqueues \t | \t The number of GPU queues to create (default = "
@@ -43,7 +43,7 @@ print_help(const char *name)
 	fprintf(stderr, "\t --warmup \t | \t The number of un-timed warmup batches to read before "
 			"the timed run (default = 0)\n");
 	fprintf(stderr, "\t --buffered \t | \t Don't open with O_DIRECT when using POSIX\n");
-	fprintf(stderr, "\t --async \t | \t Use the async API when using GDS\n");
+	fprintf(stderr, "\t --async \t | \t Use the async API when using cuFile\n");
 	fprintf(stderr, "\t --summary \t | \t Print IO and dataset stats\n");
 	fprintf(stderr, "\t --help \t | \t Print this message\n");
 }
