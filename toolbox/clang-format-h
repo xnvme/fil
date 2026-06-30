@@ -1,6 +1,12 @@
+# SPDX-FileCopyrightText: Samsung Electronics Co., Ltd
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
 BasedOnStyle: LLVM
 
+AlignConsecutiveAssignments: true
 AlignConsecutiveBitFields: AcrossEmptyLinesAndComments
+AlignConsecutiveMacros: true
 AlignEscapedNewlines: Left
 AlwaysBreakAfterReturnType: All
 BreakBeforeBraces: WebKit

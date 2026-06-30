@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+
+# SPDX-FileCopyrightText: Samsung Electronics Co., Ltd
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
+hash pre-commit 2>/dev/null || {
+	cat <<\EOF
+==============================================================================
+  Info: FIL uses the 'pre-commit' framework https://pre-commit.com/
+==============================================================================
+
+  FIL has a 'pre-commit' configuration, see: .pre-commit-config.yaml
+
+  It takes care of checking:
+
+  * Code formating
+  * Code linter issues
+
+  You can enable it by running, e.g.:
+
+    pipx install pre-commit
+    pre-commit install
+
+  Or, in whichever way best serves you on your platform.
+
+  When enabled, it will trigger when you commit/rebase, and will inspect the
+  files affected by your staged changes. You can run it manually, using:
+
+    # On staged changes
+    pre-commit run
+
+    # On all files
+    pre-commit run --all-files
+
+  There are Makefile helpers to do the same:
+
+    make format
+    make format-all
+
+==============================================================================
+EOF
+	exit 0
+}
