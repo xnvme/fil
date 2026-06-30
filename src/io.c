@@ -69,7 +69,7 @@ retry:
 	}
 	work->ranges[work->cur_range].slba += (work->nlb + 1);
 	work->ranges[work->cur_range].dbuf =
-	    (uint8_t *)work->ranges[work->cur_range].dbuf + work->nbytes;
+		(uint8_t *)work->ranges[work->cur_range].dbuf + work->nbytes;
 	return 0;
 }
 
@@ -122,7 +122,7 @@ _io_range_submit(struct xnvme_queue *queue, uint32_t opc, uint64_t *slbas, uint6
 		n_blocks = (range->elba - range->slba) + 1;
 		if (n_blocks % (nlb + 1) != 0) {
 			printf("n_blocks (%u) is not divisible by nlb + 1 (%u)\n", n_blocks,
-				    nlb + 1);
+			       nlb + 1);
 			return -EINVAL;
 		}
 	}
@@ -207,10 +207,10 @@ fil_cpu_submit(struct fil_iter *iter)
 							     file->content.extents.extent_idx + k);
 				next_slba = fil_extent_slba(device, &next_extent, blocksize);
 				if (next_slba != device->cpu_io->slbas[j] + nblocks) {
-					fprintf(
-					    stderr,
-					    "File: %s, in dir: %s, has non contiguous extents\n",
-					    file->name, dir->name);
+					fprintf(stderr,
+						"File: %s, in dir: %s, has non contiguous "
+						"extents\n",
+						file->name, dir->name);
 					fprintf(stderr,
 						"extent[%d].elba: %lu, extent[%d].slba: %lu\n",
 						k - 1, device->cpu_io->slbas[j] + nblocks - 1, k,
@@ -228,9 +228,8 @@ fil_cpu_submit(struct fil_iter *iter)
 
 		clock_gettime(CLOCK_MONOTONIC_RAW, &start);
 		err = _io_range_submit(device->queue, XNVME_SPEC_NVM_OPC_READ,
-					    device->cpu_io->slbas, device->cpu_io->elbas,
-					    nlb, iter->opts->iosize, device->buffers,
-					    device->n_buffers);
+				       device->cpu_io->slbas, device->cpu_io->elbas, nlb,
+				       iter->opts->iosize, device->buffers, device->n_buffers);
 		clock_gettime(CLOCK_MONOTONIC_RAW, &end);
 		iter->stats->io_time += ELAPSED(start, end);
 		if (err) {
@@ -260,8 +259,7 @@ fil_gpu_submit(struct fil_iter *iter)
 
 	for (uint32_t i = 0; i < iter->n_devs; i++) {
 		blocksizes[i] = xnvme_dev_get_geo(iter->devs[i]->dev)->lba_nbytes;
-		if (iter->opts->iosize < blocksizes[i] ||
-		    iter->opts->iosize % blocksizes[i]) {
+		if (iter->opts->iosize < blocksizes[i] || iter->opts->iosize % blocksizes[i]) {
 			fprintf(stderr,
 				"iosize (%lu) must be a multiple of the device LBA size (%lu)\n",
 				iter->opts->iosize, blocksizes[i]);
@@ -302,8 +300,8 @@ fil_gpu_submit(struct fil_iter *iter)
 
 				cmd->nvm.slba = slba + k * (nlbs[dev_id] + 1);
 				cmd->nvm.nlb = nlbs[dev_id];
-				cmd->common.dptr.prp.prp1 =
-				    device->gpu_io.prp1_base[buf_id] + offset * iter->opts->iosize;
+				cmd->common.dptr.prp.prp1 = device->gpu_io.prp1_base[buf_id] +
+							    offset * iter->opts->iosize;
 				device->gpu_io.n_io++;
 				offset++;
 			}
@@ -437,10 +435,10 @@ fil_file_submit(struct fil_iter *iter)
 				return err;
 			}
 			if ((uint64_t)bytes_read != nbytes) {
-				fprintf(
-				    stderr,
-				    "Could not read entire file %s, expected: %lu, actual: %ld\n",
-				    path, file->size, bytes_read);
+				fprintf(stderr,
+					"Could not read entire file %s, expected: %lu, actual: "
+					"%ld\n",
+					path, file->size, bytes_read);
 				return EIO;
 			}
 			cuFileHandleDeregister(fh);
@@ -449,7 +447,8 @@ fil_file_submit(struct fil_iter *iter)
 				err = read(fd, bounce, nbytes - bytes_read);
 				if (err == -1) {
 					err = errno;
-					fprintf(stderr, "Could not read %s, err: %ld\n", path, err);
+					fprintf(stderr, "Could not read %s, err: %ld\n", path,
+						err);
 					return err;
 				}
 				if (err == 0) {
@@ -529,8 +528,8 @@ fil_gds_async_submit(struct fil_iter *iter)
 		gds_io->expected[i] = file->size;
 		gds_io->actual[i] = 0;
 
-		status = cuFileReadAsync(gds_io->handle[i], buffer, &gds_io->expected[i], &offset, &offset, &gds_io->actual[i],
-				    gds_io->streams[i]);
+		status = cuFileReadAsync(gds_io->handle[i], buffer, &gds_io->expected[i], &offset,
+					 &offset, &gds_io->actual[i], gds_io->streams[i]);
 		if (status.err != CU_FILE_SUCCESS) {
 			fprintf(stderr, "cuFileReadAsync failed, err: %d\n", status.err);
 			err = status.err;
@@ -554,8 +553,7 @@ fil_gds_async_submit(struct fil_iter *iter)
 			goto teardown;
 		}
 		if ((size_t)gds_io->actual[i] != gds_io->expected[i]) {
-			fprintf(stderr,
-				"Could not read entire file, expected: %lu, actual: %lu\n",
+			fprintf(stderr, "Could not read entire file, expected: %lu, actual: %lu\n",
 				gds_io->expected[i], gds_io->actual[i]);
 			err = EIO;
 			goto teardown;

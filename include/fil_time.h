@@ -3,7 +3,7 @@
 
 #include <time.h>
 
-#define ELAPSED(s, e)                                                                              \
+#define ELAPSED(s, e) \
 	((double)((e).tv_sec - (s).tv_sec) + (double)((e).tv_nsec - (s).tv_nsec) / 1e9)
 
 #ifndef FIL_SUBTIME
@@ -35,7 +35,7 @@ fil_time_alloc(struct fil_time **out, struct fil_stats *stats)
 		return -1;
 	}
 	t->stats = stats;
-	err = cudaEventCreate(&t->kernel_start);
+	err      = cudaEventCreate(&t->kernel_start);
 	if (err) {
 		fprintf(stderr, "cudaEventCreate(kernel_start): %d\n", err);
 		free(t);
@@ -106,7 +106,7 @@ fil_time_kernel_elapsed(struct fil_time *t)
 #define FIL_TIME_KERNEL_END(iter)     fil_time_kernel_end((iter)->time)
 #define FIL_TIME_KERNEL_ELAPSED(iter) fil_time_kernel_elapsed((iter)->time)
 #else
-#define FIL_TIME_ALLOC(iter)          0
+#define FIL_TIME_ALLOC(iter) 0
 #define FIL_TIME_FREE(iter)
 #define FIL_TIME_BEGIN(iter)
 #define FIL_TIME_TICK(iter, field)

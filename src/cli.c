@@ -20,19 +20,23 @@ print_help(const char *name)
 {
 	fprintf(stderr, "Usage: %s <comma-separated device uris> [<args>] \n", name);
 	fprintf(stderr, "Where <args> include \n");
-	fprintf(stderr, "\t --data-dir \t | \t A directory containing subdirectories with files\n");
-	fprintf(stderr, "\t \t \t | \t The data-dir should be a name of a directory, not a path\n");
+	fprintf(stderr,
+		"\t --data-dir \t | \t A directory containing subdirectories with files\n");
+	fprintf(stderr,
+		"\t \t \t | \t The data-dir should be a name of a directory, not a path\n");
 	fprintf(stderr, "\t \t \t | \t The name of the data-dir should be unique\n");
 	fprintf(stderr, "\t --backend \t | \t The backend to use for reading files (aisio-cpu "
 			"[default], aisio-gpu, aisio-p2p, posix, gds)\n");
 	fprintf(stderr, "\t --mnt \t \t | \t The mountpoint of the drive (default = /mnt). Only "
 			"relevant for backends: 'posix' and 'gds'\n");
-	fprintf(stderr, "\t --iosize \t | \t The number of bytes per I/O (default = 4096). Only relevant for backends: 'aisio-cpu' and 'aisio-gpu'\n");
+	fprintf(stderr, "\t --iosize \t | \t The number of bytes per I/O (default = 4096). Only "
+			"relevant for backends: 'aisio-cpu' and 'aisio-gpu'\n");
 	fprintf(stderr, "\t --gpu-nqueues \t | \t The number of GPU queues to create (default = "
 			"128). Only relevant for backend: 'aisio-gpu'\n");
 	fprintf(stderr, "\t --max-file-size | \t Max file size in bytes. Required for aisio-cpu/"
 			"aisio-gpu/aisio-p2p to size the upcie heap correctly.\n");
-	fprintf(stderr, "\t --queue-depth \t | \t The NVMe queue depth (default = 1024). Only relevant for backends: 'aisio-cpu' and 'aisio-gpu'\n");
+	fprintf(stderr, "\t --queue-depth \t | \t The NVMe queue depth (default = 1024). Only "
+			"relevant for backends: 'aisio-cpu' and 'aisio-gpu'\n");
 	fprintf(stderr,
 		"\t --batch-size \t | \t The number of files to read per batch (default = 1)\n");
 	fprintf(stderr, "\t --batches \t | \t The number of batches to read (default = 1)\n");

@@ -24,14 +24,14 @@ init(PyObject *self, PyObject *args, PyObject *keywds)
 		return NULL;
 	}
 
-	static char *kwlist[] = {"dev_uri", "data_dir", "mnt", "backend",
-				 "iosize", "gpu_nqueues", "max_file_size",
-				 "queue_depth", "batch_size", NULL};
+	static char *kwlist[] = {"dev_uri",    "data_dir",    "mnt",           "backend",
+				 "iosize",     "gpu_nqueues", "max_file_size", "queue_depth",
+				 "batch_size", NULL};
 
 	if (!PyArg_ParseTupleAndKeywords(args, keywds, "s|$sssiikii", kwlist, &dev_uri,
 					 &opts.data_dir, &opts.mnt, &opts.backend, &opts.iosize,
-					 &opts.gpu_nqueues, &opts.max_file_size,
-					 &opts.queue_depth, &opts.batch_size)) {
+					 &opts.gpu_nqueues, &opts.max_file_size, &opts.queue_depth,
+					 &opts.batch_size)) {
 		return NULL;
 	}
 
@@ -116,21 +116,21 @@ fil_module_exec(PyObject *m)
 }
 
 static PyMethodDef fil_methods[] = {
-    {"init", (PyCFunction)(void (*)(void))init, METH_VARARGS | METH_KEYWORDS,
-     "Initialize FIL iterator. Returns number of files in the data set."},
-    {"next", next, METH_VARARGS,
-     "Get the next batch from the FIL iterator. Returns list of NumPy Arrays."},
-    {"term", term, METH_VARARGS, "Terminate the FIL iterator."},
-    {NULL, NULL, 0, NULL}};
+	{"init", (PyCFunction)(void (*)(void))init, METH_VARARGS | METH_KEYWORDS,
+	 "Initialize FIL iterator. Returns number of files in the data set."},
+	{"next", next, METH_VARARGS,
+	 "Get the next batch from the FIL iterator. Returns list of NumPy Arrays."},
+	{"term", term, METH_VARARGS, "Terminate the FIL iterator."},
+	{NULL, NULL, 0, NULL}};
 
 static PyModuleDef_Slot fil_module_slots[] = {{Py_mod_exec, fil_module_exec}, {0, NULL}};
 
 static struct PyModuleDef fil_module = {
-    .m_base = PyModuleDef_HEAD_INIT,
-    .m_name = "fil",
-    .m_size = 0,
-    .m_slots = fil_module_slots,
-    .m_methods = fil_methods,
+	.m_base = PyModuleDef_HEAD_INIT,
+	.m_name = "fil",
+	.m_size = 0,
+	.m_slots = fil_module_slots,
+	.m_methods = fil_methods,
 };
 
 PyMODINIT_FUNC

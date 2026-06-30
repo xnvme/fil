@@ -1,5 +1,5 @@
-from setuptools import Extension, setup
 import numpy
+from setuptools import Extension, setup
 
 setup(
     ext_modules=[
@@ -8,7 +8,7 @@ setup(
             sources=["filmodule.c"],
             include_dirs=[numpy.get_include()],
             extra_link_args=["-lfil"],
-            libraries=["fil"]
+            libraries=["fil"],
         ),
     ]
 )

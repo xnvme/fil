@@ -31,35 +31,35 @@ struct fil_iter;
  * Additionally, the name of the root directory should be unique
  */
 struct fil_opts {
-	char *data_dir;	      ///< A directory containing subdirectories with files
-	char *mnt;	      ///< The mountpoint of the drive
-	char *backend;	      ///< The backend to use
+	char *data_dir;       ///< A directory containing subdirectories with files
+	char *mnt;            ///< The mountpoint of the drive
+	char *backend;        ///< The backend to use
 	uint64_t iosize;      ///< The number of bytes per I/O
 	uint32_t gpu_nqueues; ///< The number of GPU queues to create
 	uint32_t queue_depth; ///< The NVMe queue depth
 	size_t max_file_size; ///< Max file size in bytes. Required for the aisio-cpu/aisio-gpu/
 			      ///< aisio-p2p backends to size the upcie heap correctly.
-	uint32_t batch_size;  ///< The number of files per batch
-	bool buffered;	      ///< Whether to use O_DIRECT with POSIX
-	bool async;	      ///< Whether to use async API with GDS
+	uint32_t batch_size; ///< The number of files per batch
+	bool buffered;       ///< Whether to use O_DIRECT with POSIX
+	bool async;          ///< Whether to use async API with GDS
 };
 
 /**
  * I/O Stats for calculating IOPS or bandwidth
  */
 struct fil_stats {
-	uint64_t bytes;		///< Total number of bytes read
-	uint64_t io;		///< Total number of commands sent
-	double io_time;		///< The total time spent doing IO
-	double prep_time;	/// The total time spent preparing for doing IO
-	double prep_meta_time;	///< GPU prep: outer-loop metadata lookups
-	double prep_cmds_time;	///< GPU prep: inner cmd-building writes to pinned mem
-	double io_memcpy_time;	///< GPU IO: cudaMemcpy H->D of cmds
-	double io_sync_time;	///< GPU IO: kernel launch + cudaDeviceSynchronize
-	double io_kernel_time;	///< GPU IO: kernel execution time (from cudaEvents)
-	uint64_t n_files;	///< Number of files in the dataset
+	uint64_t bytes;         ///< Total number of bytes read
+	uint64_t io;            ///< Total number of commands sent
+	double io_time;         ///< The total time spent doing IO
+	double prep_time;       /// The total time spent preparing for doing IO
+	double prep_meta_time;  ///< GPU prep: outer-loop metadata lookups
+	double prep_cmds_time;  ///< GPU prep: inner cmd-building writes to pinned mem
+	double io_memcpy_time;  ///< GPU IO: cudaMemcpy H->D of cmds
+	double io_sync_time;    ///< GPU IO: kernel launch + cudaDeviceSynchronize
+	double io_kernel_time;  ///< GPU IO: kernel execution time (from cudaEvents)
+	uint64_t n_files;       ///< Number of files in the dataset
 	uint64_t max_file_size; ///< Maximum size of files in the dataset
-	double avg_file_size;	///< Average size of files in the dataset
+	double avg_file_size;   ///< Average size of files in the dataset
 };
 
 /**
@@ -69,7 +69,7 @@ struct fil_output {
 	uint32_t n_buffers; ///< The number of buffers (and labels)
 	uint64_t *buf_len;  ///< The length of each buffer (in bytes)
 	uint32_t *labels;   ///< The label for each buffer
-	void **buffers;	    ///< The buffers
+	void **buffers;     ///< The buffers
 };
 
 /**
