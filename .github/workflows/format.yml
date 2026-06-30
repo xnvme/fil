@@ -1,0 +1,28 @@
+---
+name: format
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  format-check:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Grab source
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.x'
+
+    # Pinned so CI agrees with the version the tree was formatted with;
+    # keep in sync with the clang-format used locally.
+    - name: Install tooling
+      run: pip install pre-commit clang-format==22.1.1
+
+    - name: Run pre-commit
+      run: pre-commit run --all-files --show-diff-on-failure
