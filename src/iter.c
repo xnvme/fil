@@ -19,7 +19,7 @@
 
 // Overhead for upcie heap beyond buffer data: covers NVMe queue allocations and internal metadata
 #define UPCIE_HEAP_OVERHEAD (128 << 20)
-#define UPCIE_HEAP_ALIGN    (2 << 20)
+#define UPCIE_HEAP_ALIGN (2 << 20)
 #define UPCIE_HEAP_SIZE(buf_total) \
 	(((buf_total) + UPCIE_HEAP_OVERHEAD + UPCIE_HEAP_ALIGN - 1) & ~(UPCIE_HEAP_ALIGN - 1))
 
@@ -126,7 +126,7 @@ _xnvme_setup(struct fil_iter *iter, struct fil_dev *device, const char *uri)
 		}
 		device->nsid = xnvme_dev_get_nsid(device->cuda_dev);
 		device->cuda_queues =
-		    malloc(sizeof(*device->cuda_queues) * iter->opts->gpu_nqueues);
+			malloc(sizeof(*device->cuda_queues) * iter->opts->gpu_nqueues);
 		if (!device->cuda_queues) {
 			err = errno;
 			fprintf(stderr, "malloc(cuda_queues): %d\n", err);
@@ -316,8 +316,7 @@ _xal_setup(struct fil_iter *iter, struct fil_dev *device)
 	iter->stats->avg_file_size = iter->stats->avg_file_size / iter->stats->n_files;
 
 	// Align to page size
-	iter->buffer_size =
-	    (1 + ((iter->stats->max_file_size - 1) / xal_blksize)) * (xal_blksize);
+	iter->buffer_size = (1 + ((iter->stats->max_file_size - 1) / xal_blksize)) * (xal_blksize);
 
 	// Sort the directories so we can derive labels
 	if (device->root_inode->content.dentries.count > 1) {
@@ -419,11 +418,11 @@ _alloc(struct fil_iter *iter, uint32_t n_buffers)
 			case FIL_GPU:
 			case FIL_P2P:
 				device->buffers[j] =
-				    xnvme_buf_alloc(device->cuda_dev, iter->buffer_size);
+					xnvme_buf_alloc(device->cuda_dev, iter->buffer_size);
 				break;
 			case FIL_CPU:
 				device->buffers[j] =
-				    xnvme_buf_alloc(device->dev, iter->buffer_size);
+					xnvme_buf_alloc(device->dev, iter->buffer_size);
 				break;
 			case FIL_FILE:
 				err = cudaMalloc(&device->buffers[j], iter->buffer_size);
@@ -478,7 +477,7 @@ _alloc(struct fil_iter *iter, uint32_t n_buffers)
 			}
 		} else if (iter->type == FIL_GPU) {
 			uint32_t n_cmds =
-			    (iter->buffer_size / iter->opts->iosize) * device->n_buffers;
+				(iter->buffer_size / iter->opts->iosize) * device->n_buffers;
 
 			device->gpu_io.n_io = 0;
 
@@ -496,7 +495,7 @@ _alloc(struct fil_iter *iter, uint32_t n_buffers)
 
 			for (uint32_t c = 0; c < n_cmds; c++) {
 				device->gpu_io.cmds_host[c].common.opcode =
-				    XNVME_SPEC_NVM_OPC_READ;
+					XNVME_SPEC_NVM_OPC_READ;
 				device->gpu_io.cmds_host[c].common.nsid = device->nsid;
 			}
 
@@ -522,8 +521,8 @@ _alloc(struct fil_iter *iter, uint32_t n_buffers)
 
 			for (uint32_t j = 0; j < device->n_buffers; j++) {
 				uint64_t prp1;
-				err = xnvme_buf_vtophys(
-				    device->cuda_dev, device->buffers[j], &prp1);
+				err = xnvme_buf_vtophys(device->cuda_dev, device->buffers[j],
+							&prp1);
 				if (err) {
 					free(device->gpu_io.prp1_base);
 					device->gpu_io.prp1_base = NULL;
@@ -719,9 +718,9 @@ fil_init(struct fil_iter **iter, char **dev_uris, uint32_t n_devs, struct fil_op
 		return EINVAL;
 	}
 
-	if (!opts->max_file_size && (strcmp(opts->backend, "aisio-cpu") == 0 ||
-				     strcmp(opts->backend, "aisio-gpu") == 0 ||
-				     strcmp(opts->backend, "aisio-p2p") == 0)) {
+	if (!opts->max_file_size &&
+	    (strcmp(opts->backend, "aisio-cpu") == 0 || strcmp(opts->backend, "aisio-gpu") == 0 ||
+	     strcmp(opts->backend, "aisio-p2p") == 0)) {
 		fprintf(stderr, "--max-file-size is required for aisio backends\n");
 		return EINVAL;
 	}
@@ -760,7 +759,8 @@ fil_init(struct fil_iter **iter, char **dev_uris, uint32_t n_devs, struct fil_op
 		struct fil_dev *device = malloc(sizeof(struct fil_dev));
 		if (!device) {
 			err = errno;
-			fprintf(stderr, "Could not allocate handle for %s: %d\n", dev_uris[i], err);
+			fprintf(stderr, "Could not allocate handle for %s: %d\n", dev_uris[i],
+				err);
 			fil_term(_iter);
 			return err;
 		}
@@ -844,7 +844,8 @@ fil_next(struct fil_iter *iter, struct fil_output **output)
 
 	if (iter->data->entries && iter->data->index >= iter->data->n_entries) {
 		iter->data->index = 0;
-		FIL_SHUFFLE(iter->data->entries, struct fil_entry, iter->data->n_entries, uint64_t);
+		FIL_SHUFFLE(iter->data->entries, struct fil_entry, iter->data->n_entries,
+			    uint64_t);
 	}
 
 	err = iter->io_fn(iter);
