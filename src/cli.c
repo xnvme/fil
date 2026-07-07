@@ -44,6 +44,8 @@ print_help(const char *name)
 			"the timed run (default = 0)\n");
 	fprintf(stderr, "\t --buffered \t | \t Don't open with O_DIRECT when using POSIX\n");
 	fprintf(stderr, "\t --async \t | \t Use the async API when using cuFile\n");
+	fprintf(stderr, "\t --register_bufs | \t Register device buffers with cuFileBufRegister "
+			"(cuFile backend)\n");
 	fprintf(stderr, "\t --summary \t | \t Print IO and dataset stats\n");
 	fprintf(stderr, "\t --help \t | \t Print this message\n");
 }
@@ -110,6 +112,8 @@ parse_args(int argc, char *argv[], struct fil_cli_args *args, struct fil_opts *o
 			opts->buffered = true;
 		} else if (strcmp(argv[i], "--async") == 0) {
 			opts->async = true;
+		} else if (strcmp(argv[i], "--register_bufs") == 0) {
+			opts->register_bufs = true;
 		} else if (strcmp(argv[i], "--summary") == 0) {
 			args->summary = true;
 		} else if (strcmp(argv[i], "--help") == 0) {

@@ -431,6 +431,17 @@ _alloc(struct fil_iter *iter, uint32_t n_buffers)
 						err);
 					return err;
 				}
+				if (strcmp(iter->opts->backend, "cufile") == 0 &&
+				    iter->opts->register_bufs) {
+					CUfileError_t fstatus = cuFileBufRegister(
+						device->buffers[j], iter->buffer_size, 0);
+					if (fstatus.err != CU_FILE_SUCCESS) {
+						fprintf(stderr,
+							"cuFileBufRegister(buffers[%d]): %d\n", i,
+							fstatus.err);
+						return fstatus.err;
+					}
+				}
 				break;
 			}
 			if (!device->buffers[j]) {
@@ -638,6 +649,10 @@ fil_term(struct fil_iter *iter)
 			break;
 		case FIL_FILE:
 			for (uint32_t j = 0; j < device->n_buffers; j++) {
+				if (strcmp(iter->opts->backend, "cufile") == 0 &&
+				    iter->opts->register_bufs) {
+					cuFileBufDeregister(device->buffers[j]);
+				}
 				cudaFree(device->buffers[j]);
 			}
 			break;
@@ -715,6 +730,12 @@ fil_init(struct fil_iter **iter, char **dev_uris, uint32_t n_devs, struct fil_op
 
 	if (opts->async && strcmp(opts->backend, "cufile") != 0) {
 		fprintf(stderr, "opts->async == true is only compatible with cuFile backend");
+		return EINVAL;
+	}
+
+	if (opts->register_bufs && strcmp(opts->backend, "cufile") != 0) {
+		fprintf(stderr,
+			"opts->register_bufs == true is only compatible with cuFile backend");
 		return EINVAL;
 	}
 
@@ -871,7 +892,8 @@ fil_opts_default()
 				.max_file_size = 0,
 				.batch_size = 1,
 				.buffered = false,
-				.async = false};
+				.async = false,
+				.register_bufs = false};
 
 	return opts;
 }
