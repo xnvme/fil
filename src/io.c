@@ -151,8 +151,15 @@ _submit_device(struct fil_iter *iter, struct fil_dev *device, uint32_t dev_id)
 	uint64_t blocksize = xnvme_dev_get_geo(device->dev)->lba_nbytes;
 	uint32_t xal_blksize = xal_get_sb_blocksize(device->xal);
 	uint32_t nsid = xnvme_dev_get_nsid(device->dev);
-	uint32_t io_nblocks = iter->opts->iosize / blocksize;
+	uint32_t io_nblocks;
 	int err = 0;
+
+	if (iter->opts->iosize < blocksize || iter->opts->iosize % blocksize) {
+		fprintf(stderr, "iosize (%lu) must be a multiple of the device LBA size (%lu)\n",
+			iter->opts->iosize, blocksize);
+		return EINVAL;
+	}
+	io_nblocks = iter->opts->iosize / blocksize;
 
 	for (uint32_t j = 0; j < device->n_buffers; j++) {
 		struct xal_inode *file = fil_next_file(iter, device, dev_id, j, NULL);
