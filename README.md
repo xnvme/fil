@@ -7,7 +7,7 @@ workloads, enabling high-throughput data loading for deep learning and HPC use c
 ## Dependencies
 
 - [xNVMe](https://xnvme.io/) (`next` branch)
-- [xal](https://github.com/xnvme/xal) 0.3.0
+- [xal](https://github.com/xnvme/xal) 0.3.2
 - CUDA (with cuFile)
 
 ## Building
