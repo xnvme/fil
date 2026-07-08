@@ -17,11 +17,6 @@ struct fil_data {
 	uint64_t index;
 };
 
-struct fil_cpu_io {
-	uint64_t *slbas;
-	uint64_t *elbas;
-};
-
 struct fil_file_io {
 	char prefix[PATH_MAX];
 	char path[PATH_MAX];
@@ -48,6 +43,11 @@ struct xnvme_cuda_queue;
 void
 gpu_io_launch(struct xnvme_cuda_queue **queues_dev, uint32_t n_queues,
 	      struct xnvme_spec_cmd *cmds_dev, uint32_t n_io, uint32_t queue_depth);
+
+struct xnvme_cmd_ctx;
+
+void
+fil_io_cb(struct xnvme_cmd_ctx *ctx, void *cb_arg);
 
 int
 fil_cpu_submit(struct fil_iter *iter);

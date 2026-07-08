@@ -19,8 +19,8 @@ struct fil_dev {
 	struct fil_gpu_io gpu_io;
 	struct xal *xal;
 	struct xal_inode *root_inode;
-	struct fil_cpu_io *cpu_io;
 	struct fil_file_io *file_io;
+	uint32_t io_errors; ///< Reads that failed in the current batch (CPU/P2P path)
 	const char *data_dir;
 	void **buffers;
 	uint64_t buf;

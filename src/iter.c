@@ -184,6 +184,19 @@ _xnvme_setup(struct fil_iter *iter, struct fil_dev *device, const char *uri)
 		}
 	}
 
+	if (iter->type == FIL_CPU || iter->type == FIL_P2P) {
+		err = xnvme_queue_set_cb(device->queue, fil_io_cb, &device->io_errors);
+		if (err) {
+			fprintf(stderr, "xnvme_queue_set_cb(): %d\n", err);
+			xnvme_queue_term(device->queue);
+			if (iter->type == FIL_P2P) {
+				xnvme_dev_close(device->cuda_dev);
+			}
+			xnvme_dev_close(dev);
+			return err;
+		}
+	}
+
 	device->dev = dev;
 	return 0;
 
@@ -452,28 +465,7 @@ _alloc(struct fil_iter *iter, uint32_t n_buffers)
 			iter->output->buffers[j + i * device->n_buffers] = device->buffers[j];
 		}
 
-		if (iter->type == FIL_CPU || iter->type == FIL_P2P) {
-			device->cpu_io = malloc(sizeof(struct fil_cpu_io));
-			if (!device->cpu_io) {
-				err = errno;
-				fprintf(stderr, "Could not allocate IO struct: %d\n", err);
-				return err;
-			}
-
-			device->cpu_io->slbas = malloc(sizeof(uint64_t) * device->n_buffers);
-			if (!device->cpu_io->slbas) {
-				err = errno;
-				fprintf(stderr, "Could not allocate array for slbas: %d\n", err);
-				return err;
-			}
-
-			device->cpu_io->elbas = malloc(sizeof(uint64_t) * device->n_buffers);
-			if (!device->cpu_io->elbas) {
-				err = errno;
-				fprintf(stderr, "Could not allocate array for elbas: %d\n", err);
-				return err;
-			}
-		} else if (iter->type == FIL_FILE) {
+		if (iter->type == FIL_FILE) {
 			device->file_io = malloc(sizeof(struct fil_file_io));
 			if (!device->file_io) {
 				err = errno;
@@ -660,11 +652,7 @@ fil_term(struct fil_iter *iter)
 		xal_close(device->xal);
 		xnvme_dev_close(device->dev);
 		cuFileDriverClose();
-		if (device->cpu_io) {
-			free(device->cpu_io->slbas);
-			free(device->cpu_io->elbas);
-			free(device->cpu_io);
-		} else if (device->file_io) {
+		if (device->file_io) {
 			free(device->file_io->buffer);
 			free(device->file_io);
 		}
