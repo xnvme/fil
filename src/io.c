@@ -20,125 +20,66 @@
 #include <cuda_runtime.h>
 #include <cufile.h>
 
-struct _range {
-	uint64_t slba;
-	uint64_t elba;
-	void *dbuf;
-};
+/**
+ * Queue completion callback: reap a finished read, tally any failure into the
+ * error counter passed at queue setup, and release the context. Registered once
+ * per queue in _xnvme_setup.
+ */
+void
+fil_io_cb(struct xnvme_cmd_ctx *ctx, void *cb_arg)
+{
+	uint32_t *errors = cb_arg;
 
-struct _work {
-	uint32_t opc;
-	uint32_t nlb;
-	uint64_t nbytes;
+	if (xnvme_cmd_ctx_cpl_status(ctx)) {
+		xnvme_cmd_ctx_pr(ctx, XNVME_PR_DEF);
+		(*errors)++;
+	}
+	xnvme_queue_put_cmd_ctx(ctx->async.queue, ctx);
+}
 
-	uint32_t n_ranges;
-	uint32_t cur_range;
-
-	struct _range *ranges;
-	uint32_t errors;
-};
-
+/**
+ * Read a physically-contiguous run of 'nblocks' device blocks starting at
+ * 'slba' into '*dbuf', split into commands of at most 'io_nblocks' blocks (the
+ * configured iosize). Advances '*dbuf' past the bytes read. Completions are
+ * reaped asynchronously by fil_io_cb; when the queue is full 'poke' drains it.
+ */
 static int
-_submit(struct _work *work, struct xnvme_cmd_ctx *ctx)
+_submit_run(struct xnvme_queue *queue, uint32_t nsid, uint64_t slba, uint64_t nblocks,
+	    uint32_t io_nblocks, uint64_t blocksize, void **dbuf)
 {
 	int err;
 
-	ctx->cmd.common.opcode = work->opc;
-	ctx->cmd.common.nsid = xnvme_dev_get_nsid(ctx->dev);
-	if (work->ranges[work->cur_range].slba > work->ranges[work->cur_range].elba) {
-		work->cur_range += 1;
-	}
-	if (work->cur_range >= work->n_ranges) {
-		xnvme_queue_put_cmd_ctx(ctx->async.queue, ctx);
-		return 0;
-	}
+	while (nblocks) {
+		struct xnvme_cmd_ctx *ctx;
+		uint64_t n = nblocks < io_nblocks ? nblocks : io_nblocks;
+		uint64_t nbytes = n * blocksize;
 
-	ctx->cmd.nvm.slba = work->ranges[work->cur_range].slba;
-	ctx->cmd.nvm.nlb = work->nlb;
-
-retry:
-	err = xnvme_cmd_pass(ctx, work->ranges[work->cur_range].dbuf, work->nbytes, NULL, 0);
-	if (err == -EBUSY || err == -EAGAIN) {
-		xnvme_queue_poke(ctx->async.queue, 0);
-		goto retry;
-	}
-	if (err) {
-		printf("Failed to submit, err: %d\n", err);
-		xnvme_queue_put_cmd_ctx(ctx->async.queue, ctx);
-		return err;
-	}
-	work->ranges[work->cur_range].slba += (work->nlb + 1);
-	work->ranges[work->cur_range].dbuf =
-		(uint8_t *)work->ranges[work->cur_range].dbuf + work->nbytes;
-	return 0;
-}
-
-static void
-_cb_fn(struct xnvme_cmd_ctx *ctx, void *cb_arg)
-{
-	struct _work *work = cb_arg;
-	if (xnvme_cmd_ctx_cpl_status(ctx)) {
-		xnvme_cmd_ctx_pr(ctx, XNVME_PR_DEF);
-		work->errors++;
-		xnvme_queue_put_cmd_ctx(ctx->async.queue, ctx);
-		return;
-	}
-
-	if (work->cur_range >= work->n_ranges) {
-		xnvme_queue_put_cmd_ctx(ctx->async.queue, ctx);
-		return;
-	}
-	_submit(work, ctx);
-}
-
-static int
-_io_range_submit(struct xnvme_queue *queue, uint32_t opc, uint64_t *slbas, uint64_t *elbas,
-		 uint32_t nlb, uint64_t nbytes, void **dbufs, uint32_t n_ranges)
-{
-	struct _work work = {0};
-	struct _range ranges[n_ranges];
-	struct _range *range;
-	uint32_t n_blocks;
-	int err, capacity;
-
-	capacity = xnvme_queue_get_capacity(queue);
-	work.nlb = nlb;
-	work.n_ranges = n_ranges;
-	work.nbytes = nbytes;
-	work.opc = opc;
-	work.ranges = ranges;
-
-	err = xnvme_queue_set_cb(queue, _cb_fn, &work);
-	if (err) {
-		printf("Failed to set queue callback, err: %d\n", err);
-		return err;
-	}
-
-	for (uint32_t i = 0; i < n_ranges; i++) {
-		range = &work.ranges[i];
-		range->slba = slbas[i];
-		range->elba = elbas[i];
-		range->dbuf = dbufs[i];
-		n_blocks = (range->elba - range->slba) + 1;
-		if (n_blocks % (nlb + 1) != 0) {
-			printf("n_blocks (%u) is not divisible by nlb + 1 (%u)\n", n_blocks,
-			       nlb + 1);
-			return -EINVAL;
+		while ((ctx = xnvme_queue_get_cmd_ctx(queue)) == NULL) {
+			xnvme_queue_poke(queue, 0);
 		}
-	}
 
-	for (int i = 0; i < capacity - 1; i++) {
-		struct xnvme_cmd_ctx *ctx = xnvme_queue_get_cmd_ctx(queue);
-		err = _submit(&work, ctx);
+		ctx->cmd.common.opcode = XNVME_SPEC_NVM_OPC_READ;
+		ctx->cmd.common.nsid = nsid;
+		ctx->cmd.nvm.slba = slba;
+		ctx->cmd.nvm.nlb = n - 1;
+
+		do {
+			err = xnvme_cmd_pass(ctx, *dbuf, nbytes, NULL, 0);
+			if (err == -EBUSY || err == -EAGAIN) {
+				xnvme_queue_poke(queue, 0);
+			}
+		} while (err == -EBUSY || err == -EAGAIN);
 		if (err) {
-			break;
+			fprintf(stderr, "Failed to submit, err: %d\n", err);
+			xnvme_queue_put_cmd_ctx(queue, ctx);
+			return err;
 		}
+
+		slba += n;
+		*dbuf = (uint8_t *)*dbuf + nbytes;
+		nblocks -= n;
 	}
-	xnvme_queue_drain(queue);
-	if (work.errors) {
-		return -EIO;
-	}
-	return err;
+	return 0;
 }
 
 /**
@@ -177,64 +118,101 @@ fil_extent_slba(struct fil_dev *device, const struct xal_extent *extent, uint64_
 	return xal_fsbno_offset(device->xal, extent->start_block) / blocksize;
 }
 
+/**
+ * Read a coalesced run and tally the commands it takes into stats. A zero-length
+ * run is a no-op, so the boundary and final flushes in _submit_device can call
+ * this unconditionally.
+ */
+static int
+_flush_run(struct fil_iter *iter, struct fil_dev *device, uint32_t nsid, uint64_t slba,
+	   uint64_t run, uint32_t io_nblocks, uint64_t blocksize, void **dbuf)
+{
+	int err;
+
+	if (!run) {
+		return 0;
+	}
+	err = _submit_run(device->queue, nsid, slba, run, io_nblocks, blocksize, dbuf);
+	if (err) {
+		return err;
+	}
+	iter->stats->io += (run + io_nblocks - 1) / io_nblocks;
+	return 0;
+}
+
+/**
+ * Submit all of a device's per-buffer reads, coalescing physically-adjacent
+ * extents into runs. Always drains the queue before returning -- including on
+ * the error path -- so no outstanding command is left referencing a buffer.
+ */
+static int
+_submit_device(struct fil_iter *iter, struct fil_dev *device, uint32_t dev_id)
+{
+	uint64_t blocksize = xnvme_dev_get_geo(device->dev)->lba_nbytes;
+	uint32_t xal_blksize = xal_get_sb_blocksize(device->xal);
+	uint32_t nsid = xnvme_dev_get_nsid(device->dev);
+	uint32_t io_nblocks = iter->opts->iosize / blocksize;
+	int err = 0;
+
+	for (uint32_t j = 0; j < device->n_buffers; j++) {
+		struct xal_inode *file = fil_next_file(iter, device, dev_id, j, NULL);
+		void *dbuf = device->buffers[j];
+		uint64_t slba = 0, run = 0;
+
+		/* Coalesce physically-adjacent extents into a single run and read
+		 * it back in iosize-sized commands; a run is flushed whenever the
+		 * next extent is not contiguous with it. */
+		for (uint32_t k = 0; k < file->content.extents.count; k++) {
+			const struct xal_extent *ext =
+				xal_extent_at(device->xal, file->content.extents.extent_idx + k);
+			uint64_t ext_slba = fil_extent_slba(device, ext, blocksize);
+			uint64_t ext_blocks = (uint64_t)ext->nblocks * xal_blksize / blocksize;
+
+			if (run && ext_slba == slba + run) {
+				run += ext_blocks;
+				continue;
+			}
+			err = _flush_run(iter, device, nsid, slba, run, io_nblocks, blocksize,
+					 &dbuf);
+			if (err) {
+				goto drain;
+			}
+			slba = ext_slba;
+			run = ext_blocks;
+		}
+		err = _flush_run(iter, device, nsid, slba, run, io_nblocks, blocksize, &dbuf);
+		if (err) {
+			goto drain;
+		}
+	}
+
+drain:
+	xnvme_queue_drain(device->queue);
+	return err;
+}
+
 int
 fil_cpu_submit(struct fil_iter *iter)
 {
-	struct xal_inode *dir, *file;
-	struct xal_extent extent, next_extent;
-	uint64_t nblocks, nbytes, blocksize, next_slba;
-	uint32_t xal_blksize, nlb;
 	struct timespec start, end;
 	int err;
 
 	for (uint32_t i = 0; i < iter->n_devs; i++) {
-		clock_gettime(CLOCK_MONOTONIC_RAW, &start);
 		struct fil_dev *device = iter->devs[i];
-		blocksize = xnvme_dev_get_geo(device->dev)->lba_nbytes;
-		xal_blksize = xal_get_sb_blocksize(device->xal);
-		nlb = iter->opts->iosize / blocksize - 1;
 
-		for (uint32_t j = 0; j < device->n_buffers; j++) {
-			file = fil_next_file(iter, device, i, j, &dir);
-			extent = *xal_extent_at(device->xal, file->content.extents.extent_idx);
-			device->cpu_io->slbas[j] = fil_extent_slba(device, &extent, blocksize);
-
-			nbytes = extent.nblocks * xal_blksize;
-			nblocks = nbytes / blocksize;
-
-			for (uint32_t k = 1; k < file->content.extents.count; k++) {
-				next_extent = *xal_extent_at(device->xal,
-							     file->content.extents.extent_idx + k);
-				next_slba = fil_extent_slba(device, &next_extent, blocksize);
-				if (next_slba != device->cpu_io->slbas[j] + nblocks) {
-					fprintf(stderr,
-						"File: %s, in dir: %s, has non contiguous "
-						"extents\n",
-						file->name, dir->name);
-					fprintf(stderr,
-						"extent[%d].elba: %lu, extent[%d].slba: %lu\n",
-						k - 1, device->cpu_io->slbas[j] + nblocks - 1, k,
-						next_slba);
-					return ENOTSUP;
-				}
-				nbytes += next_extent.nblocks * xal_blksize;
-				nblocks = nbytes / blocksize;
-			}
-			device->cpu_io->elbas[j] = device->cpu_io->slbas[j] + nblocks - 1;
-			iter->stats->io += nblocks / (nlb + 1);
-		}
-		clock_gettime(CLOCK_MONOTONIC_RAW, &end);
-		iter->stats->prep_time += ELAPSED(start, end);
-
+		device->io_errors = 0;
 		clock_gettime(CLOCK_MONOTONIC_RAW, &start);
-		err = _io_range_submit(device->queue, XNVME_SPEC_NVM_OPC_READ,
-				       device->cpu_io->slbas, device->cpu_io->elbas, nlb,
-				       iter->opts->iosize, device->buffers, device->n_buffers);
+
+		err = _submit_device(iter, device, i);
+
 		clock_gettime(CLOCK_MONOTONIC_RAW, &end);
 		iter->stats->io_time += ELAPSED(start, end);
 		if (err) {
-			fprintf(stderr, "IO failed: %d\n", err);
 			return err;
+		}
+		if (device->io_errors) {
+			fprintf(stderr, "IO failed: %u\n", device->io_errors);
+			return -EIO;
 		}
 	}
 	return 0;
