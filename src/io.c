@@ -372,7 +372,7 @@ fil_file_submit(struct fil_iter *iter)
 	CUfileHandle_t fh;
 	uint32_t buf_id, dev_id, xal_blksize;
 	uint64_t nbytes;
-	void *buffer, *bounce;
+	void *buffer, *dst;
 	char *prefix, *path;
 	int fd, flags;
 	ssize_t err, bytes_read;
@@ -390,7 +390,7 @@ fil_file_submit(struct fil_iter *iter)
 		buffer = device->buffers[buf_id];
 		prefix = device->file_io->prefix;
 		path = device->file_io->path;
-		bounce = device->file_io->buffer;
+		dst = iter->opts->copy_to_gpu ? device->file_io->buffer : buffer;
 		xal_blksize = xal_get_sb_blocksize(device->xal);
 
 		file = fil_next_file(iter, device, dev_id, buf_id, &dir);
@@ -450,7 +450,7 @@ fil_file_submit(struct fil_iter *iter)
 			cuFileHandleDeregister(fh);
 		} else {
 			do {
-				err = read(fd, bounce, nbytes - bytes_read);
+				err = read(fd, dst, nbytes - bytes_read);
 				if (err == -1) {
 					err = errno;
 					fprintf(stderr, "Could not read %s, err: %ld\n", path,
@@ -468,8 +468,7 @@ fil_file_submit(struct fil_iter *iter)
 			} while ((uint64_t)bytes_read != file->size);
 
 			if (iter->opts->copy_to_gpu) {
-				err = cudaMemcpy(buffer, bounce, file->size,
-						 cudaMemcpyHostToDevice);
+				err = cudaMemcpy(buffer, dst, file->size, cudaMemcpyHostToDevice);
 				if (err) {
 					fprintf(stderr,
 						"Could not copy data to GPU memory, err: %ld\n",

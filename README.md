@@ -145,4 +145,7 @@ struct containing buffers, their lengths, and class labels derived from the
 subdirectory layout. I/O statistics accumulated across batches are available via
 `fil_get_stats()`.
 
+`aisio-gpu`, `aisio-p2p` and `cufile` return buffers in GPU memory. `aisio-cpu`
+and `posix` return host memory unless `copy_to_gpu` is set, and then need no GPU.
+
 See `include/libfil.h` for the full API reference.
