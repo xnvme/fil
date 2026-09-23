@@ -450,7 +450,7 @@ fil_file_submit(struct fil_iter *iter)
 			cuFileHandleDeregister(fh);
 		} else {
 			do {
-				err = read(fd, dst, nbytes - bytes_read);
+				err = read(fd, (char *)dst + bytes_read, nbytes - bytes_read);
 				if (err == -1) {
 					err = errno;
 					fprintf(stderr, "Could not read %s, err: %ld\n", path,
