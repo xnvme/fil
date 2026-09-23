@@ -1,0 +1,42 @@
+# Versions and locations of what is built, installed and tested on the target
+#
+# Dependency versions follow the bench setup in aisio (configs/aisio.toml). Pass
+# along with a config giving the target transport, e.g. configs/qemu_guest.toml;
+# the workflows run as root there.
+
+[os]
+distro = "ubuntu"
+version = "resolute"
+
+# Package suffix, and distribution of NVIDIA's apt repository to install from;
+# not named 'repository', which core.repository_prep takes for a git repository
+[cuda]
+version = "13-3"
+apt_distro = "ubuntu2604"
+path = "/usr/local/cuda"
+
+# fil needs the upcie-cuda backend, which is not in an xNVMe release yet
+[xnvme.repository]
+remote = "https://github.com/xnvme/xnvme.git"
+branch = "main"
+path = "/root/git/xnvme"
+
+[xnvme.build]
+options = "-Dwith-cuda=enabled -Dwith-spdk=disabled -Dwith-libvfn=disabled -Dwith-isal=disabled -Dexamples=false -Dtests=false"
+
+[xal.repository]
+remote = "https://github.com/xnvme/xal.git"
+tag = "v0.3.3"
+path = "/root/git/xal"
+
+# Where the fil checkout running cijoe is transferred to on the target
+[fil]
+source = "/root/git/fil"
+venv = "/root/fil-venv"
+
+# The device the tests format, populate and read; destroys what is on it. The
+# emulated NVMe namespace of configs/qemu_guest.toml.
+[fil.testing]
+dev = "/dev/nvme0n1"
+mountpoint = "/mnt/fil-testing"
+data_dir = "fil-testing"

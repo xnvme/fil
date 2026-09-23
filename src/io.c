@@ -390,7 +390,9 @@ fil_file_submit(struct fil_iter *iter)
 		buffer = device->buffers[buf_id];
 		prefix = device->file_io->prefix;
 		path = device->file_io->path;
-		bounce = device->file_io->buffer;
+		// Without the copy to the GPU, the buffer handed to the caller is host
+		// memory and is read into directly
+		bounce = iter->opts->copy_to_gpu ? device->file_io->buffer : buffer;
 		xal_blksize = xal_get_sb_blocksize(device->xal);
 
 		file = fil_next_file(iter, device, dev_id, buf_id, &dir);

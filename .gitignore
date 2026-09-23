@@ -73,3 +73,8 @@ MANIFEST
 
 # Rope project settings
 .ropeproject
+
+# cijoe
+cijoe/cijoe-output*/
+cijoe/cijoe-archive/
+__pycache__/

@@ -1,0 +1,45 @@
+# SPDX-FileCopyrightText: Samsung Electronics Co., Ltd
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
+doc: |
+  Start a QEMU guest as the target
+  ================================
+
+  An Ubuntu 26.04 guest with one emulated NVMe device and no GPU. Afterwards,
+  run the other workflows with 'configs/qemu_guest.toml' as the target config.
+  Needs KVM.
+
+    cijoe --monitor \
+      -c configs/qemu_guest.toml \
+      workflows/guest_start.yaml
+
+steps:
+- name: guest_kill
+  uses: qemu.guest_kill
+  with:
+    guest_name: "{{ config.qemu.default_guest }}"
+
+- name: stage_nosi_guest
+  uses: stage_nosi_guest
+
+- name: guest_initialize
+  uses: qemu.guest_initialize
+  with:
+    guest_name: "{{ config.qemu.default_guest }}"
+    system_image_name: "{{ config.qemu.default_systemimage }}"
+
+- name: guest_start
+  uses: qemu_guest_start_nvme
+  with:
+    guest_name: "{{ config.qemu.default_guest }}"
+
+- name: root_unlock
+  uses: root_unlock
+
+- name: guest_check
+  run: |
+    hostname
+    uname -a
+    df -h /
+    lspci | grep -i 'non-volatile'

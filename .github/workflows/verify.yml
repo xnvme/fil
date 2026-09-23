@@ -1,0 +1,87 @@
+---
+name: verify
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  #
+  # Build, install and verify fil in a QEMU guest with an emulated NVMe device,
+  # using the cijoe workflows; the reports and the complete output are uploaded
+  # whether or not it passes
+  #
+  build-install-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    container:
+      image: ghcr.io/safl/nosi/ubuntu-2604-docker:latest
+      # /mnt is the runner's ephemeral disk; the guest images overflow the
+      # container overlay otherwise
+      options: --privileged -v /mnt:/mnt
+
+    env:
+      CIJOE_OUTPUT: ${{ github.job }}-output
+
+    steps:
+    - name: Grab source
+      uses: actions/checkout@v7.0.0
+
+    - name: Prepare environment
+      run: |
+        git config --global --add safe.directory "$(pwd)"
+        echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+        mkdir -p /mnt/system_imaging /mnt/guests
+        ln -sfn /mnt/system_imaging "$HOME/system_imaging"
+        ln -sfn /mnt/guests "$HOME/guests"
+
+    - name: CIJOE, setup pipx environment
+      run: make cijoe-install
+
+    - name: CIJOE, check that it is available
+      run: |
+        cijoe --version
+        cijoe -r
+
+    - name: CIJOE, start guest
+      run: make cijoe-guest-start
+
+    - name: CIJOE, build, install and verify in guest
+      run: make cijoe-verify
+
+    - name: Guest serial console
+      if: failure()
+      run: |
+        tail -c 20000 "$HOME/guests/ubuntu-2604-amd64/serial.output" 2>/dev/null \
+          || echo "no guest serial output"
+
+    - name: CIJOE, upload reports
+      if: always()
+      uses: actions/upload-artifact@v7.0.1
+      with:
+        name: ${{ github.job }}-report-html
+        path: cijoe/${{ github.job }}-output*/report.html
+        if-no-files-found: warn
+
+    - name: CIJOE, archive output
+      if: always()
+      run: tar czf ${{ github.job }}-output.tar.gz -C cijoe $(cd cijoe && ls -d ${{ github.job }}-output*)
+
+    - name: CIJOE, upload output
+      if: always()
+      uses: actions/upload-artifact@v7.0.1
+      with:
+        name: ${{ github.job }}-output
+        path: ${{ github.job }}-output.tar.gz
+        if-no-files-found: error

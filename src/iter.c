@@ -1,5 +1,6 @@
 #include <errno.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <libfil.h>
@@ -383,6 +384,15 @@ _create_entries(struct fil_iter *iter)
 	return 0;
 }
 
+// Of the file backends, cuFile always reads into device memory, and posix does so only
+// when each file is to be copied to the GPU after reading; otherwise posix reads into
+// host memory, which is then what the caller is handed.
+static bool
+_file_buffers_on_device(struct fil_iter *iter)
+{
+	return (strcmp(iter->opts->backend, "cufile") == 0) || iter->opts->copy_to_gpu;
+}
+
 static int
 _alloc(struct fil_iter *iter, uint32_t n_buffers)
 {
@@ -457,6 +467,19 @@ _alloc(struct fil_iter *iter, uint32_t n_buffers)
 				}
 				break;
 			case FIL_FILE:
+				if (!_file_buffers_on_device(iter)) {
+					// Aligned, as the reads are O_DIRECT unless buffered
+					err = posix_memalign(&device->buffers[j],
+							     xal_get_sb_blocksize(device->xal),
+							     iter->buffer_size);
+					if (err) {
+						fprintf(stderr,
+							"Could not allocate buffers[%d]: %d\n", i,
+							err);
+						return err;
+					}
+					break;
+				}
 				err = cudaMalloc(&device->buffers[j], iter->buffer_size);
 				if (err) {
 					fprintf(stderr, "Could not allocate buffers[%d]: %d\n", i,
@@ -497,11 +520,15 @@ _alloc(struct fil_iter *iter, uint32_t n_buffers)
 				fprintf(stderr, "Could not allocate IO struct: %d\n", err);
 				return err;
 			}
-			device->file_io->buffer = malloc(iter->buffer_size);
-			if (!device->file_io->buffer) {
-				err = errno;
-				fprintf(stderr, "Could not allocate bounce buffer: %d\n", err);
-				return err;
+			device->file_io->buffer = NULL;
+			if (iter->opts->copy_to_gpu) {
+				device->file_io->buffer = malloc(iter->buffer_size);
+				if (!device->file_io->buffer) {
+					err = errno;
+					fprintf(stderr, "Could not allocate bounce buffer: %d\n",
+						err);
+					return err;
+				}
 			}
 		} else if (iter->type == FIL_GPU) {
 			uint32_t n_cmds =
@@ -670,6 +697,10 @@ fil_term(struct fil_iter *iter)
 			break;
 		case FIL_FILE:
 			for (uint32_t j = 0; j < device->n_buffers; j++) {
+				if (!_file_buffers_on_device(iter)) {
+					free(device->buffers[j]);
+					continue;
+				}
 				if (strcmp(iter->opts->backend, "cufile") == 0 &&
 				    iter->opts->register_bufs) {
 					cuFileBufDeregister(device->buffers[j]);
