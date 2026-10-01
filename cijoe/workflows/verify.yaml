@@ -8,6 +8,7 @@ doc: |
     and installs them
   * Builds fil as debug with warnings as errors, with sub-timers enabled, and
     as release; the release build is installed
+  * Builds the Python binding against the installed fil and imports it
 
   Run with a config giving the target transport, as root, and configs/fil.toml:
 
@@ -117,3 +118,10 @@ steps:
     meson install -C {{ config.fil.source }}/builddir --no-rebuild
     ldconfig
     filperf --help
+
+- name: fil_python
+  run: |
+    rm -rf {{ config.fil.venv }}
+    python3 -m venv {{ config.fil.venv }}
+    {{ config.fil.venv }}/bin/pip install {{ config.fil.source }}/python
+    {{ config.fil.venv }}/bin/python -c "import fil; print(fil.__file__)"

@@ -31,3 +31,4 @@ path = "/root/git/xal"
 # Where the fil checkout running cijoe is transferred to on the target
 [fil]
 source = "/root/git/fil"
+venv = "/root/fil-venv"
