@@ -3,6 +3,7 @@ doc: |
   Build and install fil and its dependencies from source on the target
 
   * Transfers the fil checkout to the target
+  * Installs system packages via toolbox/pkgs
 
   Run with a config giving the target transport, as root, and configs/fil.toml:
 
@@ -38,3 +39,7 @@ steps:
     rm -rf {{ config.fil.source }}
     mkdir -p {{ config.fil.source }}
     tar -xzf /tmp/fil-source.tar.gz -C {{ config.fil.source }}
+
+- name: pkgs
+  run: |
+    {{ config.fil.source }}/toolbox/pkgs/{{ config.os.distro }}-{{ config.os.version }}.sh

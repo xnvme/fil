@@ -4,6 +4,10 @@
 # a config giving the target transport, e.g. configs/qemu_guest.toml; the workflows
 # run as root there.
 
+[os]
+distro = "ubuntu"
+version = "resolute"
+
 # Where the fil checkout running cijoe is transferred to on the target
 [fil]
 source = "/root/git/fil"
