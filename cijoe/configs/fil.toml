@@ -8,6 +8,13 @@
 distro = "ubuntu"
 version = "resolute"
 
+# CUDA package version, and which NVIDIA apt repo to use. Not named 'repository',
+# because core.repository_prep would treat it as a git repo.
+[cuda]
+version = "13-3"
+apt_distro = "ubuntu2604"
+path = "/usr/local/cuda"
+
 # Where the fil checkout running cijoe is transferred to on the target
 [fil]
 source = "/root/git/fil"

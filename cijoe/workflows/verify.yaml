@@ -3,7 +3,7 @@ doc: |
   Build and install fil and its dependencies from source on the target
 
   * Transfers the fil checkout to the target
-  * Installs system packages via toolbox/pkgs
+  * Installs system packages via toolbox/pkgs and the CUDA toolkit
 
   Run with a config giving the target transport, as root, and configs/fil.toml:
 
@@ -43,3 +43,20 @@ steps:
 - name: pkgs
   run: |
     {{ config.fil.source }}/toolbox/pkgs/{{ config.os.distro }}-{{ config.os.version }}.sh
+
+# The parts of the CUDA toolkit that fil and xNVMe compile and link against, from
+# NVIDIA's apt repository. Without an NVIDIA driver there is no libcuda.so.1, and
+# the stub of the toolkit is made loadable under that name instead; everything not
+# calling CUDA then still runs.
+- name: cuda
+  run: |
+    wget -qO /tmp/cuda-keyring.deb https://developer.download.nvidia.com/compute/cuda/repos/{{ config.cuda.apt_distro }}/x86_64/cuda-keyring_1.1-1_all.deb
+    dpkg -i /tmp/cuda-keyring.deb
+    apt-get -qy update
+    DEBIAN_FRONTEND=noninteractive apt-get -qy install cuda-cudart-dev-{{ config.cuda.version }} cuda-driver-dev-{{ config.cuda.version }} cuda-nvcc-{{ config.cuda.version }} libcufile-dev-{{ config.cuda.version }}
+    ln -sfn /usr/local/cuda-{{ config.cuda.version | replace('-', '.') }} {{ config.cuda.path }}
+    echo {{ config.cuda.path }}/targets/x86_64-linux/lib > /etc/ld.so.conf.d/cuda.conf
+    ldconfig
+    grep -q {{ config.cuda.path }}/bin /etc/environment || sed -i 's|^PATH="|PATH="{{ config.cuda.path }}/bin:|' /etc/environment
+    nvcc --version
+    ldconfig -p | grep -q 'libcuda.so.1 ' || { mkdir -p /usr/local/cuda-stub && ln -sfn {{ config.cuda.path }}/targets/x86_64-linux/lib/stubs/libcuda.so /usr/local/cuda-stub/libcuda.so.1 && echo /usr/local/cuda-stub > /etc/ld.so.conf.d/cuda-stub.conf && ldconfig; }
