@@ -6,6 +6,8 @@ doc: |
   * Installs system packages via toolbox/pkgs and the CUDA toolkit
   * Retrieves xNVMe and xal at the versions given by the config, then builds
     and installs them
+  * Builds fil as debug with warnings as errors, with sub-timers enabled, and
+    as release; the release build is installed
 
   Run with a config giving the target transport, as root, and configs/fil.toml:
 
@@ -91,3 +93,27 @@ steps:
     meson install -C {{ config.xal.repository.path }}/builddir --no-rebuild
     ldconfig
     pkg-config --modversion xal
+
+# CUDA is required, so that fil not finding the toolkit fails the build instead of
+# leaving out the backends needing it
+- name: fil_build_debug
+  run: |
+    rm -rf {{ config.fil.source }}/builddir-debug
+    meson setup {{ config.fil.source }}/builddir-debug {{ config.fil.source }} --buildtype=debug -Dwerror=true -Dcuda=enabled
+    meson compile -C {{ config.fil.source }}/builddir-debug
+
+- name: fil_build_subtime
+  run: |
+    rm -rf {{ config.fil.source }}/builddir-subtime
+    meson setup {{ config.fil.source }}/builddir-subtime {{ config.fil.source }} -Dsubtime=true
+    meson compile -C {{ config.fil.source }}/builddir-subtime
+
+- name: fil_build
+  run: |
+    make -C {{ config.fil.source }} clean config build
+
+- name: fil_install
+  run: |
+    meson install -C {{ config.fil.source }}/builddir --no-rebuild
+    ldconfig
+    filperf --help
