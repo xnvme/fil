@@ -1,0 +1,63 @@
+---
+name: verify
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  #
+  # Build, install and verify fil in a QEMU guest with an emulated NVMe device,
+  # using the cijoe workflows
+  #
+  build-install-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    container:
+      image: ghcr.io/safl/nosi/ubuntu-2604-docker:latest
+      # /mnt is the runner's ephemeral disk; the guest images overflow the
+      # container overlay otherwise
+      options: --privileged -v /mnt:/mnt
+
+    steps:
+    - name: Grab source
+      uses: actions/checkout@v7.0.0
+
+    - name: Prepare environment
+      run: |
+        git config --global --add safe.directory "$(pwd)"
+        echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+        mkdir -p /mnt/system_imaging /mnt/guests
+        ln -sfn /mnt/system_imaging "$HOME/system_imaging"
+        ln -sfn /mnt/guests "$HOME/guests"
+
+    - name: CIJOE, setup pipx environment
+      run: pipx install cijoe --include-deps
+
+    - name: CIJOE, start guest
+      working-directory: cijoe
+      run: |
+        cijoe workflows/guest_start.yaml \
+          --config configs/qemu_guest.toml \
+          --output ${{ github.job }}-output-guest-start \
+          --monitor
+
+    - name: CIJOE, build, install and verify in guest
+      working-directory: cijoe
+      run: |
+        cijoe workflows/verify.yaml \
+          --config configs/qemu_guest.toml \
+          --config configs/fil.toml \
+          --output ${{ github.job }}-output \
+          --monitor
