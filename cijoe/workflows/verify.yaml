@@ -1,0 +1,40 @@
+---
+doc: |
+  Build and install fil and its dependencies from source on the target
+
+  * Transfers the fil checkout to the target
+
+  Run with a config giving the target transport, as root, and configs/fil.toml:
+
+    cijoe --monitor \
+      -c configs/qemu_guest.toml \
+      -c configs/fil.toml \
+      workflows/verify.yaml
+
+steps:
+- name: sysinfo
+  run: |
+    uname -a
+    cat /etc/os-release
+    nproc
+    free -m
+
+# Copy the fil checkout, uncommitted changes included, so that the target builds
+# what is checked out and not what was last pushed. cijoe runs from cijoe/.
+- name: fil_source_pack
+  run: |
+    git -C .. ls-files -z --cached --others --exclude-standard | tar -C .. --null -T - -czf /tmp/fil-source.tar.gz
+  with:
+    transport: initiator
+
+- name: fil_source_put
+  uses: core.put
+  with:
+    src: /tmp/fil-source.tar.gz
+    dst: /tmp/fil-source.tar.gz
+
+- name: fil_source_unpack
+  run: |
+    rm -rf {{ config.fil.source }}
+    mkdir -p {{ config.fil.source }}
+    tar -xzf /tmp/fil-source.tar.gz -C {{ config.fil.source }}

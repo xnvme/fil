@@ -1,0 +1,9 @@
+# Versions and locations of what is built, installed and tested on the target
+#
+# Dependency versions follow those of aisio (configs/aisio.toml). Pass along with
+# a config giving the target transport, e.g. configs/qemu_guest.toml; the workflows
+# run as root there.
+
+# Where the fil checkout running cijoe is transferred to on the target
+[fil]
+source = "/root/git/fil"
