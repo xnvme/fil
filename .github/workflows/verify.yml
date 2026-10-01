@@ -18,7 +18,8 @@ defaults:
 jobs:
   #
   # Build, install and verify fil in a QEMU guest with an emulated NVMe device,
-  # using the cijoe workflows
+  # using the cijoe workflows; the reports and the complete output are uploaded
+  # whether or not it passes
   #
   build-install-verify:
     runs-on: ubuntu-latest
@@ -61,3 +62,21 @@ jobs:
           --config configs/fil.toml \
           --output ${{ github.job }}-output \
           --monitor
+
+    - name: Guest serial console
+      if: failure()
+      run: |
+        tail -c 20000 "$HOME/guests/ubuntu-2604-amd64/serial.output" 2>/dev/null \
+          || echo "no guest serial output"
+
+    - name: CIJOE, archive output
+      if: always()
+      run: tar czf ${{ github.job }}-output.tar.gz -C cijoe $(cd cijoe && ls -d ${{ github.job }}-output*)
+
+    - name: CIJOE, upload output
+      if: always()
+      uses: actions/upload-artifact@v7.0.1
+      with:
+        name: ${{ github.job }}-output
+        path: ${{ github.job }}-output.tar.gz
+        if-no-files-found: error
