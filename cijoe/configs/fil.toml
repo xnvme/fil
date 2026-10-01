@@ -15,6 +15,14 @@ version = "13-3"
 apt_distro = "ubuntu2604"
 path = "/usr/local/cuda"
 
+[xnvme.repository]
+remote = "https://github.com/xnvme/xnvme.git"
+tag = "v0.8.1"
+path = "/root/git/xnvme"
+
+[xnvme.build]
+options = "-Dwith-cuda=enabled -Dwith-spdk=disabled -Dwith-libvfn=disabled -Dwith-isal=disabled -Dexamples=false -Dtests=false"
+
 # Where the fil checkout running cijoe is transferred to on the target
 [fil]
 source = "/root/git/fil"

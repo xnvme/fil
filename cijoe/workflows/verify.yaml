@@ -4,6 +4,8 @@ doc: |
 
   * Transfers the fil checkout to the target
   * Installs system packages via toolbox/pkgs and the CUDA toolkit
+  * Retrieves xNVMe at the version given by the config, then builds and
+    installs it
 
   Run with a config giving the target transport, as root, and configs/fil.toml:
 
@@ -60,3 +62,19 @@ steps:
     grep -q {{ config.cuda.path }}/bin /etc/environment || sed -i 's|^PATH="|PATH="{{ config.cuda.path }}/bin:|' /etc/environment
     nvcc --version
     ldconfig -p | grep -q 'libcuda.so.1 ' || { mkdir -p /usr/local/cuda-stub && ln -sfn {{ config.cuda.path }}/targets/x86_64-linux/lib/stubs/libcuda.so /usr/local/cuda-stub/libcuda.so.1 && echo /usr/local/cuda-stub > /etc/ld.so.conf.d/cuda-stub.conf && ldconfig; }
+
+- name: fetch_sources
+  uses: core.repository_prep
+
+- name: xnvme_build
+  run: |
+    git -C {{ config.xnvme.repository.path }} log -1 --oneline
+    rm -rf {{ config.xnvme.repository.path }}/builddir
+    meson setup {{ config.xnvme.repository.path }}/builddir {{ config.xnvme.repository.path }} {{ config.xnvme.build.options }}
+    meson compile -C {{ config.xnvme.repository.path }}/builddir
+
+- name: xnvme_install
+  run: |
+    meson install -C {{ config.xnvme.repository.path }}/builddir --no-rebuild
+    ldconfig
+    pkg-config --modversion xnvme
