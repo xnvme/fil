@@ -139,9 +139,16 @@ steps:
 
 # Populate the file system with a dataset, then mount it again read-only, so that
 # all meta-data is on the device when fil parses it from there
+#
+# Two more files are grown by interleaved direct appends, so that each spans many
+# extents; a buffered tail leaves each with a partial last block. The step fails
+# if they do not end up fragmented.
 - name: prep_dataset
   run: |
     python3 {{ config.fil.source }}/cijoe/auxiliary/populate_dataset.py --mnt {{ config.fil.testing.mountpoint }} --data-dir {{ config.fil.testing.data_dir }}
+    for i in $(seq 16); do for f in frag_a frag_b; do dd if=/dev/urandom of={{ config.fil.testing.mountpoint }}/{{ config.fil.testing.data_dir }}/class_0/$f bs=4096 count=1 oflag=direct,append conv=notrunc status=none || exit 1; done; done
+    for f in frag_a frag_b; do head -c 1234 /dev/urandom >> {{ config.fil.testing.mountpoint }}/{{ config.fil.testing.data_dir }}/class_0/$f; done
+    for f in frag_a frag_b; do filefrag {{ config.fil.testing.mountpoint }}/{{ config.fil.testing.data_dir }}/class_0/$f; [ "$(filefrag {{ config.fil.testing.mountpoint }}/{{ config.fil.testing.data_dir }}/class_0/$f | awk '{print $2}')" -ge 2 ] || exit 1; done
     find {{ config.fil.testing.mountpoint }}/{{ config.fil.testing.data_dir }} -type f | wc -l
     umount {{ config.fil.testing.mountpoint }}
     mount -o ro {{ config.fil.testing.dev }} {{ config.fil.testing.mountpoint }}
