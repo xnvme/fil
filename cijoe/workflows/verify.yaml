@@ -4,8 +4,8 @@ doc: |
 
   * Transfers the fil checkout to the target
   * Installs system packages via toolbox/pkgs and the CUDA toolkit
-  * Retrieves xNVMe at the version given by the config, then builds and
-    installs it
+  * Retrieves xNVMe and xal at the versions given by the config, then builds
+    and installs them
 
   Run with a config giving the target transport, as root, and configs/fil.toml:
 
@@ -78,3 +78,16 @@ steps:
     meson install -C {{ config.xnvme.repository.path }}/builddir --no-rebuild
     ldconfig
     pkg-config --modversion xnvme
+
+- name: xal_build
+  run: |
+    git -C {{ config.xal.repository.path }} log -1 --oneline
+    rm -rf {{ config.xal.repository.path }}/builddir
+    meson setup {{ config.xal.repository.path }}/builddir {{ config.xal.repository.path }}
+    meson compile -C {{ config.xal.repository.path }}/builddir
+
+- name: xal_install
+  run: |
+    meson install -C {{ config.xal.repository.path }}/builddir --no-rebuild
+    ldconfig
+    pkg-config --modversion xal

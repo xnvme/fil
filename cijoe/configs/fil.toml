@@ -23,6 +23,11 @@ path = "/root/git/xnvme"
 [xnvme.build]
 options = "-Dwith-cuda=enabled -Dwith-spdk=disabled -Dwith-libvfn=disabled -Dwith-isal=disabled -Dexamples=false -Dtests=false"
 
+[xal.repository]
+remote = "https://github.com/xnvme/xal.git"
+tag = "v0.4.0"
+path = "/root/git/xal"
+
 # Where the fil checkout running cijoe is transferred to on the target
 [fil]
 source = "/root/git/fil"
