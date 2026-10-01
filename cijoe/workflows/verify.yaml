@@ -9,6 +9,7 @@ doc: |
   * Builds fil as debug with warnings as errors, with sub-timers enabled, and
     as release; the release build is installed
   * Builds the Python binding against the installed fil and imports it
+  * Formats config.fil.testing.dev with XFS and mounts it
 
   Run with a config giving the target transport, as root, and configs/fil.toml:
 
@@ -125,3 +126,13 @@ steps:
     python3 -m venv {{ config.fil.venv }}
     {{ config.fil.venv }}/bin/pip install {{ config.fil.source }}/python
     {{ config.fil.venv }}/bin/python -c "import fil; print(fil.__file__)"
+
+# A mount left by an earlier run is removed; a device mounted anywhere else is
+# refused, as it likely holds data that is not meant for testing
+- name: prep_xfs
+  run: |
+    umount {{ config.fil.testing.mountpoint }} || true
+    ! findmnt --source {{ config.fil.testing.dev }}
+    mkfs.xfs -f {{ config.fil.testing.dev }}
+    mkdir -p {{ config.fil.testing.mountpoint }}
+    mount {{ config.fil.testing.dev }} {{ config.fil.testing.mountpoint }}

@@ -32,3 +32,10 @@ path = "/root/git/xal"
 [fil]
 source = "/root/git/fil"
 venv = "/root/fil-venv"
+
+# The device the tests format, populate and read; destroys what is on it. The
+# emulated NVMe namespace of configs/qemu_guest.toml.
+[fil.testing]
+dev = "/dev/nvme0n1"
+mountpoint = "/mnt/fil-testing"
+data_dir = "fil-testing"
