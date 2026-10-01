@@ -9,7 +9,7 @@ doc: |
   * Builds fil as debug with warnings as errors, with sub-timers enabled, and
     as release; the release build is installed
   * Builds the Python binding against the installed fil and imports it
-  * Formats config.fil.testing.dev with XFS and mounts it
+  * Formats config.fil.testing.dev with XFS and populates it with a dataset
 
   Run with a config giving the target transport, as root, and configs/fil.toml:
 
@@ -136,3 +136,12 @@ steps:
     mkfs.xfs -f {{ config.fil.testing.dev }}
     mkdir -p {{ config.fil.testing.mountpoint }}
     mount {{ config.fil.testing.dev }} {{ config.fil.testing.mountpoint }}
+
+# Populate the file system with a dataset, then mount it again read-only, so that
+# all meta-data is on the device when fil parses it from there
+- name: prep_dataset
+  run: |
+    python3 {{ config.fil.source }}/cijoe/auxiliary/populate_dataset.py --mnt {{ config.fil.testing.mountpoint }} --data-dir {{ config.fil.testing.data_dir }}
+    find {{ config.fil.testing.mountpoint }}/{{ config.fil.testing.data_dir }} -type f | wc -l
+    umount {{ config.fil.testing.mountpoint }}
+    mount -o ro {{ config.fil.testing.dev }} {{ config.fil.testing.mountpoint }}
