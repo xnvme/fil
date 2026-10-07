@@ -6,7 +6,7 @@ workloads, enabling high-throughput data loading for deep learning and HPC use c
 
 ## Dependencies
 
-- [xNVMe](https://xnvme.io/) (`next` branch)
+- [xNVMe](https://xnvme.io/)
 - [xal](https://github.com/xnvme/xal) 0.3.3
 - CUDA with cuFile, optional: without it the `aisio-gpu` and `cufile` backends and
   `--copy-to-gpu` are not built, and the others are. The `cuda` build option

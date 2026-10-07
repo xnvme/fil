@@ -142,7 +142,7 @@ _xnvme_setup(struct fil_iter *iter, struct fil_dev *device, const char *uri)
 		}
 
 		for (uint32_t q = 0; q < iter->opts->gpu_nqueues; q++) {
-			err = xnvme_cuda_queue_create(device->cuda_dev, iter->opts->queue_depth,
+			err = xnvme_cuda_queue_create(device->cuda_dev, iter->opts->queue_depth, 0,
 						      &device->cuda_queues[q]);
 			if (err) {
 				fprintf(stderr, "xnvme_cuda_queue_create(): %d\n", err);
