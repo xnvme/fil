@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <limits.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -274,9 +275,24 @@ _xal_setup(struct fil_iter *iter, struct fil_dev *device)
 	struct xal_opts xal_opts = {0};
 	struct xal_inode *root;
 	uint32_t xal_blksize;
+	char mnt[PATH_MAX];
 	int err;
 
-	xal_opts.be = XAL_BACKEND_XFS;
+	if (iter->type == FIL_FILE) {
+		// posix and cufile open the files through the filesystem mounted at
+		// mnt, so list them through it too. Parsing the device under a mount
+		// misses changes the filesystem has not yet written back to it.
+		// xal takes no symlink as the mountpoint.
+		if (!realpath(iter->opts->mnt, mnt)) {
+			err = -errno;
+			fprintf(stderr, "realpath(%s): %d\n", iter->opts->mnt, err);
+			return err;
+		}
+		xal_opts.be = XAL_BACKEND_FIEMAP;
+		xal_opts.mountpoint = mnt;
+	} else {
+		xal_opts.be = XAL_BACKEND_XFS;
+	}
 
 	err = xal_open(device->dev, &xal, &xal_opts);
 	if (err) {
