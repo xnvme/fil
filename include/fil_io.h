@@ -31,6 +31,8 @@ struct fil_cufile_io {
 	cudaStream_t *streams;
 };
 
+struct fil_opends_io;
+
 struct fil_gpu_io {
 	struct xnvme_spec_cmd *cmds_host;
 	struct xnvme_spec_cmd *cmds_dev;
@@ -59,6 +61,40 @@ int
 fil_file_submit(struct fil_iter *iter);
 
 int
-fil_cufile_async_submit(struct fil_iter *iter);
+fil_cufile_stream_submit(struct fil_iter *iter);
+
+struct fil_dev;
+struct xal_inode;
+
+struct xal_inode *
+fil_next_file(struct fil_iter *iter, struct fil_dev *device, uint32_t dev_id, uint32_t buf_id,
+	      struct xal_inode **dir);
+
+int
+fil_opends_setup(void);
+
+int
+fil_opends_buf_alloc(struct fil_iter *iter, void **buf);
+
+void
+fil_opends_buf_free(void *buf);
+
+int
+fil_opends_io_alloc(struct fil_iter *iter);
+
+void
+fil_opends_term(struct fil_iter *iter);
+
+int
+fil_opends_file_register(int fd, void **fh);
+
+ssize_t
+fil_opends_file_read(void *fh, void *buf, size_t nbytes, const char *path);
+
+int
+fil_opends_stream_submit(struct fil_iter *iter);
+
+int
+fil_opends_async_submit(struct fil_iter *iter);
 
 #endif

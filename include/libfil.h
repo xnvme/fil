@@ -41,7 +41,6 @@ struct fil_opts {
 			      ///< aisio-p2p backends to size the upcie heap correctly.
 	uint32_t batch_size; ///< The number of files per batch
 	bool buffered;       ///< Whether to use O_DIRECT with POSIX
-	bool async;          ///< Whether to use async API with cuFile
 	bool register_bufs;  ///< Register cuFile device buffers with cuFileBufRegister
 	bool copy_to_gpu;    ///< aisio-cpu/posix: copy files host->device after read
 };

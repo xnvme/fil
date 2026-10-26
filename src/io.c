@@ -89,7 +89,7 @@ _submit_run(struct xnvme_queue *queue, uint32_t nsid, uint64_t slba, uint64_t nb
  * *dir. The returned pointers reference the device's xal pool, which is stable
  * for the lifetime of the iterator.
  */
-static struct xal_inode *
+struct xal_inode *
 fil_next_file(struct fil_iter *iter, struct fil_dev *device, uint32_t dev_id, uint32_t buf_id,
 	      struct xal_inode **dir)
 {
@@ -370,15 +370,17 @@ fil_file_submit(struct fil_iter *iter)
 	CUfileError_t status;
 	CUfileDescr_t descr;
 	CUfileHandle_t fh;
+	void *dfh;
 	uint32_t buf_id, dev_id, xal_blksize;
 	uint64_t nbytes;
 	void *buffer, *dst;
 	char *prefix, *path;
 	int fd, flags;
 	ssize_t err, bytes_read;
-	bool is_cufile = strcmp(iter->opts->backend, "cufile") == 0;
+	bool is_cufile = iter->type == FIL_CUFILE;
+	bool is_opends = iter->type == FIL_OPENDS;
 	flags = O_RDONLY;
-	if (is_cufile || !iter->opts->buffered) {
+	if (is_cufile || is_opends || !iter->opts->buffered) {
 		flags |= O_DIRECT;
 	}
 
@@ -403,7 +405,7 @@ fil_file_submit(struct fil_iter *iter)
 		strcat(path, file->name);
 
 		nbytes = file->size;
-		if (!is_cufile && !iter->opts->buffered) {
+		if (!is_cufile && !is_opends && !iter->opts->buffered) {
 			// POSIX O_DIRECT requires aligned nbytes
 			nbytes = (1 + ((file->size - 1) / xal_blksize)) * xal_blksize;
 		}
@@ -424,6 +426,12 @@ fil_file_submit(struct fil_iter *iter)
 				fprintf(stderr, "Could not register file, err: %d\n", status.err);
 				close(fd);
 				return status.err;
+			}
+		} else if (is_opends) {
+			err = fil_opends_file_register(fd, &dfh);
+			if (err) {
+				close(fd);
+				return err;
 			}
 		}
 
@@ -448,6 +456,18 @@ fil_file_submit(struct fil_iter *iter)
 				return EIO;
 			}
 			cuFileHandleDeregister(fh);
+		} else if (is_opends) {
+			bytes_read = fil_opends_file_read(dfh, buffer, nbytes, path);
+			if (bytes_read < 0) {
+				return EIO;
+			}
+			if ((uint64_t)bytes_read != nbytes) {
+				fprintf(stderr,
+					"Could not read entire file %s, expected: %lu, actual: "
+					"%ld\n",
+					path, file->size, bytes_read);
+				return EIO;
+			}
 		} else {
 			do {
 				err = read(fd, (char *)dst + bytes_read, nbytes - bytes_read);
@@ -485,7 +505,7 @@ fil_file_submit(struct fil_iter *iter)
 }
 
 int
-fil_cufile_async_submit(struct fil_iter *iter)
+fil_cufile_stream_submit(struct fil_iter *iter)
 {
 	struct xal_inode *dir, *file;
 	struct timespec start, end;

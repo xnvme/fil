@@ -39,6 +39,11 @@ xal_dep = dependency(
   required: true
 )
 
+opends_dep = dependency(
+  'opends_aisio',
+  required: get_option('opends')
+)
+
 fil_deps = [
   rt_dep,
   cuda_dep,
@@ -55,6 +60,13 @@ sources = files(
   'src/io.c',
   'src/gpu_io.cu',
 )
+
+if opends_dep.found()
+  fil_deps += opends_dep
+  sources += files('src/opends.c')
+else
+  sources += files('src/opends_stub.c')
+endif
 
 include_dirs = include_directories('include')
 
