@@ -1,4 +1,4 @@
-project('fil', 'c', 'cuda',
+project('fil', 'c',
   version: '0.3.4',
   meson_version: '>=0.55.0',
   default_options: [
@@ -10,13 +10,6 @@ project('fil', 'c', 'cuda',
   ]
 )
 
-# Targets the local GPU architecture; change for cross-arch builds
-add_project_arguments('-arch=native', language: 'cuda')
-
-if get_option('subtime')
-  add_project_arguments('-DFIL_SUBTIME=1', language: 'c')
-endif
-
 pkg = import('pkgconfig')
 cc = meson.get_compiler('c')
 
@@ -25,7 +18,25 @@ if not cc.has_function('clock_gettime', prefix: '#include <time.h>', dependencie
   error('clock_gettime not found')
 endif
 
-cuda_dep = dependency('cuda', modules: ['cuda', 'cufile'])
+# CUDA gives the aisio-gpu and cufile backends and copy_to_gpu; without it the
+# others build, and fil_init() rejects those
+cuda_opt = get_option('cuda')
+have_cuda = add_languages('cuda', required: cuda_opt, native: false)
+cuda_dep = dependency('cuda', modules: ['cuda', 'cufile'], required: cuda_opt)
+have_cuda = have_cuda and cuda_dep.found()
+if have_cuda
+  # Targets the local GPU architecture; change for cross-arch builds
+  add_project_arguments('-arch=native', language: 'cuda')
+  add_project_arguments('-DFIL_CUDA_ENABLED=1', language: ['c', 'cuda'])
+endif
+
+# The sub-times are of the aisio-gpu path, and are taken with CUDA events
+if get_option('subtime')
+  if not have_cuda
+    error('subtime needs CUDA')
+  endif
+  add_project_arguments('-DFIL_SUBTIME=1', language: 'c')
+endif
 
 xnvme_dep = dependency(
   'xnvme',
@@ -41,10 +52,12 @@ xal_dep = dependency(
 
 fil_deps = [
   rt_dep,
-  cuda_dep,
   xnvme_dep,
   xal_dep,
 ]
+if have_cuda
+  fil_deps += cuda_dep
+endif
 
 public_headers = files(
   'include/libfil.h',
@@ -53,8 +66,10 @@ public_headers = files(
 sources = files(
   'src/iter.c',
   'src/io.c',
-  'src/gpu_io.cu',
 )
+if have_cuda
+  sources += files('src/gpu_io.cu')
+endif
 
 include_dirs = include_directories('include')
 

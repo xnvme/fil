@@ -17,8 +17,10 @@
 #include <libxal.h>
 #include <libxnvme.h>
 
+#ifdef FIL_CUDA_ENABLED
 #include <cuda_runtime.h>
 #include <cufile.h>
+#endif
 
 /**
  * Queue completion callback: reap a finished read, tally any failure into the
@@ -198,6 +200,7 @@ drain:
 	return err;
 }
 
+#ifdef FIL_CUDA_ENABLED
 static int
 _copy_buffers_to_gpu(struct fil_iter *iter, struct fil_dev *device, uint32_t dev_id)
 {
@@ -215,6 +218,7 @@ _copy_buffers_to_gpu(struct fil_iter *iter, struct fil_dev *device, uint32_t dev
 	}
 	return 0;
 }
+#endif
 
 int
 fil_cpu_submit(struct fil_iter *iter)
@@ -229,9 +233,11 @@ fil_cpu_submit(struct fil_iter *iter)
 		clock_gettime(CLOCK_MONOTONIC_RAW, &start);
 
 		err = _submit_device(iter, device, i);
+#ifdef FIL_CUDA_ENABLED
 		if (!err && iter->opts->copy_to_gpu) {
 			err = _copy_buffers_to_gpu(iter, device, i);
 		}
+#endif
 
 		clock_gettime(CLOCK_MONOTONIC_RAW, &end);
 		iter->stats->io_time += ELAPSED(start, end);
@@ -246,6 +252,7 @@ fil_cpu_submit(struct fil_iter *iter)
 	return 0;
 }
 
+#ifdef FIL_CUDA_ENABLED
 int
 fil_gpu_submit(struct fil_iter *iter)
 {
@@ -361,15 +368,24 @@ fil_gpu_submit(struct fil_iter *iter)
 	iter->stats->io_time += ELAPSED(start, end);
 	return 0;
 }
+#else
+int
+fil_gpu_submit(struct fil_iter *FIL_UNUSED(iter))
+{
+	return ENOTSUP;
+}
+#endif
 
 int
 fil_file_submit(struct fil_iter *iter)
 {
 	struct xal_inode *dir, *file;
 	struct timespec start, end;
+#ifdef FIL_CUDA_ENABLED
 	CUfileError_t status;
 	CUfileDescr_t descr;
 	CUfileHandle_t fh;
+#endif
 	uint32_t buf_id, dev_id, xal_blksize;
 	uint64_t nbytes;
 	void *buffer, *dst;
@@ -415,6 +431,7 @@ fil_file_submit(struct fil_iter *iter)
 			return err;
 		}
 
+#ifdef FIL_CUDA_ENABLED
 		if (is_cufile) {
 			memset(&descr, 0, sizeof(CUfileDescr_t));
 			descr.handle.fd = fd;
@@ -426,12 +443,14 @@ fil_file_submit(struct fil_iter *iter)
 				return status.err;
 			}
 		}
+#endif
 
 		clock_gettime(CLOCK_MONOTONIC_RAW, &end);
 		iter->stats->prep_time += ELAPSED(start, end);
 
 		clock_gettime(CLOCK_MONOTONIC_RAW, &start);
 		bytes_read = 0;
+#ifdef FIL_CUDA_ENABLED
 		if (is_cufile) {
 
 			bytes_read = cuFileRead(fh, buffer, nbytes, 0, 0);
@@ -448,7 +467,9 @@ fil_file_submit(struct fil_iter *iter)
 				return EIO;
 			}
 			cuFileHandleDeregister(fh);
-		} else {
+		} else
+#endif
+		{
 			do {
 				err = read(fd, (char *)dst + bytes_read, nbytes - bytes_read);
 				if (err == -1) {
@@ -467,6 +488,7 @@ fil_file_submit(struct fil_iter *iter)
 				bytes_read += err;
 			} while ((uint64_t)bytes_read != file->size);
 
+#ifdef FIL_CUDA_ENABLED
 			if (iter->opts->copy_to_gpu) {
 				err = cudaMemcpy(buffer, dst, file->size, cudaMemcpyHostToDevice);
 				if (err) {
@@ -476,6 +498,7 @@ fil_file_submit(struct fil_iter *iter)
 					return err;
 				}
 			}
+#endif
 		}
 		clock_gettime(CLOCK_MONOTONIC_RAW, &end);
 		iter->stats->io_time += ELAPSED(start, end);
@@ -484,6 +507,7 @@ fil_file_submit(struct fil_iter *iter)
 	return 0;
 }
 
+#ifdef FIL_CUDA_ENABLED
 int
 fil_cufile_async_submit(struct fil_iter *iter)
 {
@@ -580,3 +604,10 @@ teardown:
 	}
 	return err;
 }
+#else
+int
+fil_cufile_async_submit(struct fil_iter *FIL_UNUSED(iter))
+{
+	return ENOTSUP;
+}
+#endif

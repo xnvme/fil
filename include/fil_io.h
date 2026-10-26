@@ -1,8 +1,10 @@
 #ifndef __FIL_IO_H
 #define __FIL_IO_H
 
+#ifdef FIL_CUDA_ENABLED
 #include <cuda_runtime.h>
 #include <cufile.h>
+#endif
 #include <limits.h>
 #include <stdint.h>
 
@@ -23,6 +25,7 @@ struct fil_file_io {
 	void *buffer;
 };
 
+#ifdef FIL_CUDA_ENABLED
 struct fil_cufile_io {
 	CUfileDescr_t *descr;
 	CUfileHandle_t *handle;
@@ -30,6 +33,7 @@ struct fil_cufile_io {
 	ssize_t *actual;
 	cudaStream_t *streams;
 };
+#endif
 
 struct fil_gpu_io {
 	struct xnvme_spec_cmd *cmds_host;

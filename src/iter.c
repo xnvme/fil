@@ -9,11 +9,13 @@
 #include <fil_time.h>
 #include <fil_util.h>
 
+#ifdef FIL_CUDA_ENABLED
 #include <cuda_runtime.h>
 #include <cufile.h>
+#include <libxnvme_cuda.h>
+#endif
 #include <libxal.h>
 #include <libxnvme.h>
-#include <libxnvme_cuda.h>
 
 // Arbitrary value out of range of normal err
 #define DATA_DIR_FOUND 9000
@@ -64,7 +66,9 @@ _xnvme_setup(struct fil_iter *iter, struct fil_dev *device, const char *uri)
 	size_t heap_size = UPCIE_HEAP_SIZE(iter->opts->max_file_size * iter->opts->batch_size);
 	struct xnvme_dev *dev;
 	int err;
+#ifdef FIL_CUDA_ENABLED
 	CUfileError_t status;
+#endif
 
 	if (strcmp(backend, "io_uring") == 0) {
 		opts.be = "linux";
@@ -95,11 +99,13 @@ _xnvme_setup(struct fil_iter *iter, struct fil_dev *device, const char *uri)
 	} else if (strcmp(backend, "cufile") == 0) {
 		opts.be = "linux";
 		iter->type = FIL_FILE;
+#ifdef FIL_CUDA_ENABLED
 		status = cuFileDriverOpen();
 		if (status.err != CU_FILE_SUCCESS) {
 			fprintf(stderr, "Could not open cuFile driver: %d\n", status.err);
 			return status.err;
 		}
+#endif
 	} else {
 		fprintf(stderr, "Invalid backend: %s\n", backend);
 		return EINVAL;
@@ -120,6 +126,7 @@ _xnvme_setup(struct fil_iter *iter, struct fil_dev *device, const char *uri)
 	}
 
 	if (iter->type == FIL_GPU) {
+#ifdef FIL_CUDA_ENABLED
 		err = open_cuda_dev(uri, heap_size, &device->cuda_dev);
 		if (err) {
 			xnvme_dev_close(dev);
@@ -162,6 +169,7 @@ _xnvme_setup(struct fil_iter *iter, struct fil_dev *device, const char *uri)
 			cudaFree(device->cuda_queues_dev);
 			goto gpu_err_destroy_queues;
 		}
+#endif
 	} else if (iter->type == FIL_P2P) {
 		err = open_cuda_dev(uri, heap_size, &device->cuda_dev);
 		if (err) {
@@ -201,6 +209,7 @@ _xnvme_setup(struct fil_iter *iter, struct fil_dev *device, const char *uri)
 	device->dev = dev;
 	return 0;
 
+#ifdef FIL_CUDA_ENABLED
 gpu_err_destroy_queues:
 	for (uint32_t k = 0; k < iter->opts->gpu_nqueues; k++) {
 		xnvme_cuda_queue_destroy(device->cuda_dev, device->cuda_queues[k]);
@@ -211,6 +220,7 @@ gpu_err_close_cuda:
 	xnvme_dev_close(device->cuda_dev);
 	xnvme_dev_close(dev);
 	return err;
+#endif
 }
 
 static int
@@ -453,6 +463,7 @@ _alloc(struct fil_iter *iter, uint32_t n_buffers)
 			case FIL_CPU:
 				device->buffers[j] =
 					xnvme_buf_alloc(device->dev, iter->buffer_size);
+#ifdef FIL_CUDA_ENABLED
 				if (device->buffers[j] && iter->opts->copy_to_gpu) {
 					err = cudaMalloc(&device->gpu_buffers[j],
 							 iter->buffer_size);
@@ -463,6 +474,7 @@ _alloc(struct fil_iter *iter, uint32_t n_buffers)
 						return err;
 					}
 				}
+#endif
 				break;
 			case FIL_FILE:
 				if (!_file_buffers_on_device(iter)) {
@@ -478,6 +490,7 @@ _alloc(struct fil_iter *iter, uint32_t n_buffers)
 					}
 					break;
 				}
+#ifdef FIL_CUDA_ENABLED
 				err = cudaMalloc(&device->buffers[j], iter->buffer_size);
 				if (err) {
 					fprintf(stderr, "Could not allocate buffers[%d]: %d\n", i,
@@ -495,6 +508,7 @@ _alloc(struct fil_iter *iter, uint32_t n_buffers)
 						return fstatus.err;
 					}
 				}
+#endif
 				break;
 			}
 			if (!device->buffers[j]) {
@@ -529,6 +543,7 @@ _alloc(struct fil_iter *iter, uint32_t n_buffers)
 				}
 			}
 		} else if (iter->type == FIL_GPU) {
+#ifdef FIL_CUDA_ENABLED
 			uint32_t n_cmds =
 				(iter->buffer_size / iter->opts->iosize) * device->n_buffers;
 
@@ -588,9 +603,11 @@ _alloc(struct fil_iter *iter, uint32_t n_buffers)
 				}
 				device->gpu_io.prp1_base[j] = prp1;
 			}
+#endif
 		}
 	}
 
+#ifdef FIL_CUDA_ENABLED
 	if (iter->opts->async) {
 		iter->cufile_io = malloc(sizeof(struct fil_cufile_io));
 		if (!iter->cufile_io) {
@@ -643,6 +660,7 @@ _alloc(struct fil_iter *iter, uint32_t n_buffers)
 			}
 		}
 	}
+#endif
 
 	iter->data = malloc(sizeof(struct fil_data));
 	if (!iter->data) {
@@ -663,6 +681,7 @@ fil_term(struct fil_iter *iter)
 		struct fil_dev *device = iter->devs[i];
 		switch (iter->type) {
 		case FIL_GPU:
+#ifdef FIL_CUDA_ENABLED
 			for (uint32_t j = 0; j < device->n_buffers; j++) {
 				xnvme_buf_free(device->cuda_dev, device->buffers[j]);
 			}
@@ -675,6 +694,7 @@ fil_term(struct fil_iter *iter)
 			cudaFreeHost(device->gpu_io.cmds_host);
 			cudaFree(device->gpu_io.cmds_dev);
 			free(device->gpu_io.prp1_base);
+#endif
 			break;
 		case FIL_P2P:
 			for (uint32_t j = 0; j < device->n_buffers; j++) {
@@ -686,9 +706,11 @@ fil_term(struct fil_iter *iter)
 		case FIL_CPU:
 			for (uint32_t j = 0; j < device->n_buffers; j++) {
 				xnvme_buf_free(device->dev, device->buffers[j]);
+#ifdef FIL_CUDA_ENABLED
 				if (device->gpu_buffers) {
 					cudaFree(device->gpu_buffers[j]);
 				}
+#endif
 			}
 			free(device->gpu_buffers);
 			xnvme_queue_term(device->queue);
@@ -699,17 +721,21 @@ fil_term(struct fil_iter *iter)
 					free(device->buffers[j]);
 					continue;
 				}
+#ifdef FIL_CUDA_ENABLED
 				if (strcmp(iter->opts->backend, "cufile") == 0 &&
 				    iter->opts->register_bufs) {
 					cuFileBufDeregister(device->buffers[j]);
 				}
 				cudaFree(device->buffers[j]);
+#endif
 			}
 			break;
 		}
 		xal_close(device->xal);
 		xnvme_dev_close(device->dev);
+#ifdef FIL_CUDA_ENABLED
 		cuFileDriverClose();
+#endif
 		if (device->file_io) {
 			free(device->file_io->buffer);
 			free(device->file_io);
@@ -717,6 +743,7 @@ fil_term(struct fil_iter *iter)
 		free(device->buffers);
 		free(device);
 	}
+#ifdef FIL_CUDA_ENABLED
 	if (iter->cufile_io) {
 		free(iter->cufile_io->descr);
 		free(iter->cufile_io->handle);
@@ -727,6 +754,7 @@ fil_term(struct fil_iter *iter)
 		}
 		free(iter->cufile_io->streams);
 	}
+#endif
 	if (iter->data) {
 		free(iter->data->entries);
 		free(iter->data);
@@ -768,6 +796,15 @@ fil_init(struct fil_iter **iter, char **dev_uris, uint32_t n_devs, struct fil_op
 		fprintf(stderr, "Batch size (%u) not divisible by number of devices (%u)\n",
 			opts->batch_size, n_devs);
 	}
+
+#ifndef FIL_CUDA_ENABLED
+	if (strcmp(opts->backend, "aisio-gpu") == 0 || strcmp(opts->backend, "cufile") == 0 ||
+	    opts->copy_to_gpu) {
+		fprintf(stderr, "fil is built without CUDA, which %s needs\n",
+			opts->copy_to_gpu ? "copy_to_gpu" : opts->backend);
+		return ENOTSUP;
+	}
+#endif
 
 	if (opts->buffered && strcmp(opts->backend, "posix") != 0) {
 		fprintf(stderr, "opts->buffered == true is only compatible with POSIX backend");
