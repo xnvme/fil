@@ -449,7 +449,7 @@ fil_file_submit(struct fil_iter *iter)
 	CUfileDescr_t descr;
 	CUfileHandle_t fh;
 #endif
-	uint32_t buf_id, dev_id, xal_blksize;
+	uint32_t buf_id, dev_id, blksize;
 	uint64_t nbytes, size = 0;
 	void *buffer, *dst;
 	char *path;
@@ -469,7 +469,7 @@ fil_file_submit(struct fil_iter *iter)
 		buffer = device->buffers[buf_id];
 		path = device->file_io->path;
 		dst = iter->opts->copy_to_gpu ? device->file_io->buffer : buffer;
-		xal_blksize = xal_get_sb_blocksize(device->xal);
+		blksize = device->fs_blksize;
 
 		file = fil_next_file(iter, device, dev_id, buf_id);
 		iter->stats->io++;
@@ -482,7 +482,7 @@ fil_file_submit(struct fil_iter *iter)
 		nbytes = size;
 		if (!is_cufile && !iter->opts->buffered) {
 			// POSIX O_DIRECT requires aligned nbytes
-			nbytes = (1 + ((size - 1) / xal_blksize)) * xal_blksize;
+			nbytes = (1 + ((size - 1) / blksize)) * blksize;
 		}
 
 #ifdef FIL_CUDA_ENABLED

@@ -23,6 +23,7 @@ struct fil_dev {
 	char *data_dir;
 	char *paths; ///< Paths relative to data_dir
 	uint64_t n_files;
+	uint32_t fs_blksize;
 	uint32_t io_errors; ///< Reads that failed in the current batch (CPU/P2P path)
 	void **buffers;
 	void **gpu_buffers; ///< Per-buffer GPU destinations for the aisio-cpu copy_to_gpu path

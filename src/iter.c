@@ -1,8 +1,17 @@
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
+#include <dirent.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <sys/statvfs.h>
+#include <unistd.h>
 
 #include <libfil.h>
 #include <fil_io.h>
@@ -391,6 +400,7 @@ _read_index(struct fil_iter *iter, struct fil_dev *device, struct fil_stats *sta
 	if (err) {
 		return err;
 	}
+	device->fs_blksize = xal_get_sb_blocksize(device->xal);
 
 	for (uint32_t attempt = 0; attempt < FIL_READ_ATTEMPTS; attempt++) {
 		memset(stats, 0, sizeof(*stats));
@@ -405,10 +415,117 @@ _read_index(struct fil_iter *iter, struct fil_dev *device, struct fil_stats *sta
 }
 
 static int
-_xal_setup(struct fil_iter *iter, struct fil_dev *device)
+_skip_dots(const struct dirent *entry)
+{
+	return strcmp(entry->d_name, ".") && strcmp(entry->d_name, "..");
+}
+
+// As the index sorts, so the labels match
+static int
+_by_name(const struct dirent **a, const struct dirent **b)
+{
+	return strcmp((*a)->d_name, (*b)->d_name);
+}
+
+static void
+_free_dirents(struct dirent **entries, int n)
+{
+	for (int i = 0; i < n; i++) {
+		free(entries[i]);
+	}
+	free(entries);
+}
+
+static int
+_list_class(struct fil_dev *device, struct fil_listing *l, int data_fd, const char *class_name,
+	    uint32_t label)
+{
+	struct dirent **files;
+	int class_fd, n, err = 0;
+
+	class_fd = openat(data_fd, class_name, O_RDONLY | O_DIRECTORY);
+	if (class_fd == -1) {
+		err = errno;
+		fprintf(stderr, "%s %s/%s\n",
+			err == ENOTDIR ? "Not a class directory:" : "Could not open",
+			device->data_dir, class_name);
+		return err == ENOTDIR ? EINVAL : err;
+	}
+
+	n = scandirat(class_fd, ".", &files, _skip_dots, _by_name);
+	if (n < 0) {
+		err = errno;
+		fprintf(stderr, "Could not list %s/%s: %d\n", device->data_dir, class_name, err);
+		close(class_fd);
+		return err;
+	}
+
+	for (int j = 0; j < n && !err; j++) {
+		struct stat st;
+
+		if (fstatat(class_fd, files[j]->d_name, &st, AT_SYMLINK_NOFOLLOW) == -1) {
+			err = errno;
+			fprintf(stderr, "Could not stat %s/%s/%s: %d\n", device->data_dir,
+				class_name, files[j]->d_name, err);
+		} else if (!S_ISREG(st.st_mode)) {
+			fprintf(stderr, "Not a regular file: %s/%s/%s\n", device->data_dir,
+				class_name, files[j]->d_name);
+			err = EINVAL;
+		} else {
+			err = _add_file(device, l, class_name, files[j]->d_name, label, st.st_size,
+					NULL);
+		}
+	}
+
+	_free_dirents(files, n);
+	close(class_fd);
+	return err;
+}
+
+static int
+_list_dataset(struct fil_dev *device, struct fil_stats *stats)
+{
+	struct fil_listing l = {.stats = stats};
+	struct dirent **classes;
+	struct statvfs sv;
+	int data_fd, n, err = 0;
+
+	data_fd = open(device->data_dir, O_RDONLY | O_DIRECTORY);
+	if (data_fd == -1) {
+		err = errno;
+		fprintf(stderr, "Could not open %s: %d\n", device->data_dir, err);
+		return err;
+	}
+	if (fstatvfs(data_fd, &sv) == -1) {
+		err = errno;
+		fprintf(stderr, "Could not stat the file system of %s: %d\n", device->data_dir,
+			err);
+		close(data_fd);
+		return err;
+	}
+	device->fs_blksize = sv.f_bsize;
+
+	n = scandirat(data_fd, ".", &classes, _skip_dots, _by_name);
+	if (n < 0) {
+		err = errno;
+		fprintf(stderr, "Could not list %s: %d\n", device->data_dir, err);
+		close(data_fd);
+		return err;
+	}
+
+	for (int i = 0; i < n && !err; i++) {
+		err = _list_class(device, &l, data_fd, classes[i]->d_name, i);
+	}
+
+	_free_dirents(classes, n);
+	close(data_fd);
+	return err;
+}
+
+static int
+_dataset_setup(struct fil_iter *iter, struct fil_dev *device)
 {
 	struct fil_stats stats = {0};
-	uint32_t xal_blksize;
 	uint64_t buffer_size;
 	int err;
 
@@ -417,7 +534,11 @@ _xal_setup(struct fil_iter *iter, struct fil_dev *device)
 		return errno;
 	}
 
-	err = _read_index(iter, device, &stats);
+	if (iter->opts->xal_shm[0] == '\0') {
+		err = _list_dataset(device, &stats);
+	} else {
+		err = _read_index(iter, device, &stats);
+	}
 	if (!err && !device->n_files) {
 		fprintf(stderr, "No files in %s\n", device->data_dir);
 		err = ENOENT;
@@ -441,8 +562,7 @@ _xal_setup(struct fil_iter *iter, struct fil_dev *device)
 	}
 
 	// Align to the file system block size
-	xal_blksize = xal_get_sb_blocksize(device->xal);
-	buffer_size = (1 + ((stats.max_file_size - 1) / xal_blksize)) * xal_blksize;
+	buffer_size = (1 + ((stats.max_file_size - 1) / device->fs_blksize)) * device->fs_blksize;
 	if (buffer_size > iter->buffer_size) {
 		iter->buffer_size = buffer_size;
 	}
@@ -607,7 +727,7 @@ _alloc(struct fil_iter *iter, uint32_t n_buffers)
 				if (!_file_buffers_on_device(iter)) {
 					// Aligned, as the reads are O_DIRECT unless buffered
 					err = posix_memalign(&device->buffers[j],
-							     xal_get_sb_blocksize(device->xal),
+							     device->fs_blksize,
 							     iter->buffer_size);
 					if (err) {
 						fprintf(stderr,
@@ -862,7 +982,9 @@ fil_term(struct fil_iter *iter)
 			}
 			break;
 		}
-		xal_close(device->xal);
+		if (device->xal) {
+			xal_close(device->xal);
+		}
 		xnvme_dev_close(device->dev);
 #ifdef FIL_CUDA_ENABLED
 		cuFileDriverClose();
@@ -935,8 +1057,8 @@ fil_init(struct fil_iter **iter, char **dev_uris, uint32_t n_devs, struct fil_op
 		return EINVAL;
 	}
 
-	if (opts->xal_shm[0] == '\0') {
-		fprintf(stderr, "xal_shm is required\n");
+	if (opts->xal_shm[0] == '\0' && strncmp(opts->backend, "aisio-", strlen("aisio-")) == 0) {
+		fprintf(stderr, "xal_shm is required for the aisio backends\n");
 		return EINVAL;
 	}
 
@@ -1025,7 +1147,7 @@ fil_init(struct fil_iter **iter, char **dev_uris, uint32_t n_devs, struct fil_op
 		}
 		memset(device, 0, sizeof(struct fil_dev));
 
-		err = _xal_setup(_iter, device);
+		err = _dataset_setup(_iter, device);
 		if (err) {
 			fprintf(stderr, "XAL setup failed for %s: %d\n", dev_uris[i], err);
 			free(device);

@@ -23,7 +23,8 @@ print_help(const char *name)
 	fprintf(stderr, "\t --data-dir \t | \t Absolute path to a directory containing "
 			"subdirectories with files\n");
 	fprintf(stderr, "\t --xal-shm \t | \t The name of the xal-server index of the file "
-			"system holding data-dir\n");
+			"system holding data-dir. Required for backends: 'aisio-cpu', 'aisio-gpu' "
+			"and 'aisio-p2p'\n");
 	fprintf(stderr, "\t --nsid \t | \t The namespace (default = 1)\n");
 	fprintf(stderr, "\t --backend \t | \t The backend to use for reading files (aisio-cpu "
 			"[default], aisio-gpu, aisio-p2p, posix, cufile)\n");
