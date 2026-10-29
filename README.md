@@ -56,9 +56,9 @@ filperf <device-uri> --data-dir <path> [options]
 | `--homi-id <n>` | _(none)_ | Id of the `homi` server holding the device; required for the `aisio` backends |
 | `--batch-size <n>` | `1` | Number of files per batch |
 | `--batches <n>` | `1` | Number of batches to read |
-| `--iosize <n>` | `4096` | Number of bytes per I/O (`aisio-cpu` and `aisio-gpu` only) |
-| `--queue-depth <n>` | `1024` | NVMe queue depth (`aisio-cpu` and `aisio-gpu` only) |
-| `--gpu-nqueues <n>` | `128` | Number of GPU queues (`aisio-gpu` only) |
+| `--iosize <n>` | `4096` | Number of bytes per I/O (`aisio` backends only) |
+| `--queue-depth <n>` | `128` | NVMe queue depth (`aisio` backends only) |
+| `--gpu-nqueues <n>` | `1` | Number of GPU queues (`aisio-gpu` only) |
 | `--warmup <n>` | `0` | Un-timed batches to run before starting the measurement window |
 | `--buffered` | off | Disable `O_DIRECT` when using `posix` backend |
 | `--copy-to-gpu` | off | Copy each file from host to device memory after reading (`aisio-cpu` and `posix` only) |

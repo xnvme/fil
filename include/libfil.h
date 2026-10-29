@@ -80,8 +80,8 @@ struct fil_output {
  * homi_id = 0
  * nsid = 1
  * iosize = 4096
- * gpu_nqueues = 128
- * queue_depth = 1024
+ * gpu_nqueues = 1
+ * queue_depth = 128
  * batch_size = 1
  *
  * @returns Struct fil_opts with default settings

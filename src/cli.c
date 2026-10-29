@@ -30,11 +30,11 @@ print_help(const char *name)
 	fprintf(stderr, "\t --homi-id \t | \t The id of the homi server holding the device. "
 			"Required for backends: 'aisio-cpu', 'aisio-gpu' and 'aisio-p2p'\n");
 	fprintf(stderr, "\t --iosize \t | \t The number of bytes per I/O (default = 4096). Only "
-			"relevant for backends: 'aisio-cpu' and 'aisio-gpu'\n");
+			"relevant for backends: 'aisio-cpu', 'aisio-gpu' and 'aisio-p2p'\n");
 	fprintf(stderr, "\t --gpu-nqueues \t | \t The number of GPU queues to create (default = "
-			"128). Only relevant for backend: 'aisio-gpu'\n");
-	fprintf(stderr, "\t --queue-depth \t | \t The NVMe queue depth (default = 1024). Only "
-			"relevant for backends: 'aisio-cpu' and 'aisio-gpu'\n");
+			"1). Only relevant for backend: 'aisio-gpu'\n");
+	fprintf(stderr, "\t --queue-depth \t | \t The NVMe queue depth (default = 128). Only "
+			"relevant for backends: 'aisio-cpu', 'aisio-gpu' and 'aisio-p2p'\n");
 	fprintf(stderr,
 		"\t --batch-size \t | \t The number of files to read per batch (default = 1)\n");
 	fprintf(stderr, "\t --batches \t | \t The number of batches to read (default = 1)\n");
