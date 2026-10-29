@@ -18,7 +18,7 @@ struct fil_cli_args {
 void
 print_help(const char *name)
 {
-	fprintf(stderr, "Usage: %s <device uri> [<args>] \n", name);
+	fprintf(stderr, "Usage: %s [<device uri>] [<args>] \n", name);
 	fprintf(stderr, "Where <args> include \n");
 	fprintf(stderr, "\t --data-dir \t | \t Absolute path to a directory containing "
 			"subdirectories with files\n");
@@ -145,8 +145,7 @@ parse_args(int argc, char *argv[], struct fil_cli_args *args, struct fil_opts *o
 	}
 
 	if (args->dev_uris == NULL) {
-		fprintf(stderr, "Error: device uri is required\n");
-		return -EINVAL;
+		args->n_devs = 1;
 	}
 
 	if (args->n_devs > 1) {
@@ -183,7 +182,7 @@ main(int argc, char *argv[])
 		fprintf(stderr, "Allocating memory for device URIs failed: %d\n", err);
 		return err;
 	}
-	dev_uris[0] = strtok(args.dev_uris, ",");
+	dev_uris[0] = args.dev_uris ? strtok(args.dev_uris, ",") : NULL;
 	for (uint32_t i = 1; i < args.n_devs; i++) {
 		dev_uris[i] = strtok(NULL, ",");
 	}

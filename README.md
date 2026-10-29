@@ -42,7 +42,7 @@ The `filperf` CLI runs benchmarks and reports throughput metrics. Progress is pr
 as CSV every second: elapsed time, batches completed, IOPS, and MiB/s.
 
 ```
-filperf <device-uri> --data-dir <path> [options]
+filperf [<device-uri>] --data-dir <path> [options]
 ```
 
 ### Options
@@ -65,6 +65,8 @@ filperf <device-uri> --data-dir <path> [options]
 | `--async` | off | Use async API when using `cufile` backend |
 | `--summary` | off | Print I/O and dataset statistics after completion |
 | `--help` | | Print usage |
+
+`posix` and `cufile` need no device uri.
 
 ### Examples
 

@@ -1057,6 +1057,11 @@ fil_init(struct fil_iter **iter, char **dev_uris, uint32_t n_devs, struct fil_op
 		return EINVAL;
 	}
 
+	if (!dev_uris[0] && strncmp(opts->backend, "aisio-", strlen("aisio-")) == 0) {
+		fprintf(stderr, "A device uri is required for the aisio backends\n");
+		return EINVAL;
+	}
+
 	if (opts->xal_shm[0] == '\0' && strncmp(opts->backend, "aisio-", strlen("aisio-")) == 0) {
 		fprintf(stderr, "xal_shm is required for the aisio backends\n");
 		return EINVAL;
