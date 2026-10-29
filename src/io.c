@@ -6,6 +6,7 @@
 #include <fcntl.h>
 #include <stdint.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <libfil.h>
@@ -84,27 +85,38 @@ _submit_run(struct xnvme_queue *queue, uint32_t nsid, uint64_t slba, uint64_t nb
 	return 0;
 }
 
-/**
- * Pull the next file from the shuffled dataset, resolve its directory and inode,
- * and record its length, label and byte count into the output and stats. Returns
- * the file inode, which references the device's xal pool.
- */
-static struct xal_inode *
+static struct fil_file *
 fil_next_file(struct fil_iter *iter, struct fil_dev *device, uint32_t dev_id, uint32_t buf_id)
 {
-	struct fil_entry entry = iter->data->entries[iter->data->index++ % iter->data->n_entries];
-	uint32_t slot = buf_id + dev_id * device->n_buffers;
-	struct xal_inode *dir_inode, *file;
+	uint64_t pos = iter->data->order[iter->data->index++ % iter->data->n_entries];
 
-	dir_inode = xal_inode_at(device->xal,
-				 device->root_inode->content.dentries.inodes_idx + entry.dir);
-	file = xal_inode_at(device->xal, dir_inode->content.dentries.inodes_idx + entry.file);
+	iter->output->labels[buf_id + dev_id * device->n_buffers] = device->files[pos].label;
 
-	iter->output->buf_len[slot] = file->size;
-	iter->output->labels[slot] = entry.dir;
-	iter->stats->bytes += file->size;
+	return &device->files[pos];
+}
 
-	return file;
+static void
+fil_count_file(struct fil_iter *iter, struct fil_dev *device, uint32_t dev_id, uint32_t buf_id,
+	       uint64_t nbytes)
+{
+	iter->output->buf_len[buf_id + dev_id * device->n_buffers] = nbytes;
+	iter->stats->bytes += nbytes;
+}
+
+static int
+fil_next_inode(struct fil_iter *iter, struct fil_dev *device, uint32_t dev_id, uint32_t buf_id,
+	       struct xal_inode **inode)
+{
+	struct fil_file *file = fil_next_file(iter, device, dev_id, buf_id);
+	int err;
+
+	err = fil_file_inode(iter, device, file, inode);
+	if (err) {
+		return err;
+	}
+	fil_count_file(iter, device, dev_id, buf_id, (*inode)->size);
+
+	return 0;
 }
 
 /** Convert an extent's starting FS block to a device LBA. */
@@ -158,9 +170,14 @@ _submit_device(struct fil_iter *iter, struct fil_dev *device, uint32_t dev_id)
 	io_nblocks = iter->opts->iosize / blocksize;
 
 	for (uint32_t j = 0; j < device->n_buffers; j++) {
-		struct xal_inode *file = fil_next_file(iter, device, dev_id, j);
 		void *dbuf = device->buffers[j];
 		uint64_t slba = 0, run = 0;
+		struct xal_inode *file;
+
+		err = fil_next_inode(iter, device, dev_id, j, &file);
+		if (err) {
+			goto drain;
+		}
 
 		/* Coalesce physically-adjacent extents into a single run and read
 		 * it back in iosize-sized commands; a run is flushed whenever the
@@ -168,8 +185,14 @@ _submit_device(struct fil_iter *iter, struct fil_dev *device, uint32_t dev_id)
 		for (uint32_t k = 0; k < file->content.extents.count; k++) {
 			const struct xal_extent *ext =
 				xal_extent_at(device->xal, file->content.extents.extent_idx + k);
-			uint64_t ext_slba = fil_extent_slba(device, ext, blocksize);
-			uint64_t ext_blocks = (uint64_t)ext->nblocks * xal_blksize / blocksize;
+			uint64_t ext_slba, ext_blocks;
+
+			if (!ext) {
+				err = ESTALE;
+				goto drain;
+			}
+			ext_slba = fil_extent_slba(device, ext, blocksize);
+			ext_blocks = (uint64_t)ext->nblocks * xal_blksize / blocksize;
 
 			if (run && ext_slba == slba + run) {
 				run += ext_blocks;
@@ -285,11 +308,20 @@ fil_gpu_submit(struct fil_iter *iter)
 		buf_id = device->buf++ % device->n_buffers;
 		offset = 0;
 
-		file = fil_next_file(iter, device, dev_id, buf_id);
+		err = fil_next_inode(iter, device, dev_id, buf_id, &file);
+		if (err) {
+			return err;
+		}
 		FIL_TIME_TICK(iter, prep_meta_time);
 
 		for (uint32_t j = 0; j < file->content.extents.count; j++) {
-			extent = *xal_extent_at(device->xal, file->content.extents.extent_idx + j);
+			struct xal_extent *at =
+				xal_extent_at(device->xal, file->content.extents.extent_idx + j);
+
+			if (!at) {
+				return ESTALE;
+			}
+			extent = *at;
 			slba = fil_extent_slba(device, &extent, blocksizes[dev_id]);
 			nbytes = extent.nblocks * xal_blksizes[dev_id];
 			nblocks = nbytes / blocksizes[dev_id];
@@ -369,10 +401,48 @@ fil_gpu_submit(struct fil_iter *FIL_UNUSED(iter))
 }
 #endif
 
+// Records the size the file has now, not the one it was listed with
+static int
+fil_open_file(struct fil_iter *iter, struct fil_dev *device, uint32_t dev_id, uint32_t buf_id,
+	      struct fil_file *file, int flags, int *fd, uint64_t *size)
+{
+	char *path = device->file_io->path;
+	struct stat st;
+	int err;
+
+	err = fil_file_path(device, file, path, sizeof(device->file_io->path));
+	if (err) {
+		return err;
+	}
+
+	*fd = open(path, flags);
+	if (*fd == -1) {
+		err = errno;
+		fprintf(stderr, "Could not open %s, err: %d\n", path, err);
+		return err;
+	}
+	if (fstat(*fd, &st) == -1) {
+		err = errno;
+		fprintf(stderr, "Could not stat %s, err: %d\n", path, err);
+		close(*fd);
+		return err;
+	}
+	if ((uint64_t)st.st_size > iter->buffer_size) {
+		fprintf(stderr, "%s grew to %ld bytes, past its buffer of %lu\n", path, st.st_size,
+			iter->buffer_size);
+		close(*fd);
+		return EFBIG;
+	}
+
+	*size = st.st_size;
+	fil_count_file(iter, device, dev_id, buf_id, *size);
+	return 0;
+}
+
 int
 fil_file_submit(struct fil_iter *iter)
 {
-	struct xal_inode *file;
+	struct fil_file *file;
 	struct timespec start, end;
 #ifdef FIL_CUDA_ENABLED
 	CUfileError_t status;
@@ -380,7 +450,7 @@ fil_file_submit(struct fil_iter *iter)
 	CUfileHandle_t fh;
 #endif
 	uint32_t buf_id, dev_id, xal_blksize;
-	uint64_t nbytes;
+	uint64_t nbytes, size = 0;
 	void *buffer, *dst;
 	char *path;
 	int fd, flags;
@@ -404,23 +474,15 @@ fil_file_submit(struct fil_iter *iter)
 		file = fil_next_file(iter, device, dev_id, buf_id);
 		iter->stats->io++;
 
-		err = xal_inode_path(device->xal, file, path, sizeof(device->file_io->path));
-		if (err < 0) {
-			fprintf(stderr, "xal_inode_path(%s): %ld\n", file->name, err);
-			return -err;
+		err = fil_open_file(iter, device, dev_id, buf_id, file, flags, &fd, &size);
+		if (err) {
+			return err;
 		}
 
-		nbytes = file->size;
+		nbytes = size;
 		if (!is_cufile && !iter->opts->buffered) {
 			// POSIX O_DIRECT requires aligned nbytes
-			nbytes = (1 + ((file->size - 1) / xal_blksize)) * xal_blksize;
-		}
-
-		fd = open(path, flags);
-		if (fd == -1) {
-			err = errno;
-			fprintf(stderr, "Could not open %s, err: %ld\n", path, err);
-			return err;
+			nbytes = (1 + ((size - 1) / xal_blksize)) * xal_blksize;
 		}
 
 #ifdef FIL_CUDA_ENABLED
@@ -455,7 +517,7 @@ fil_file_submit(struct fil_iter *iter)
 				fprintf(stderr,
 					"Could not read entire file %s, expected: %lu, actual: "
 					"%ld\n",
-					path, file->size, bytes_read);
+					path, size, bytes_read);
 				return EIO;
 			}
 			cuFileHandleDeregister(fh);
@@ -474,15 +536,15 @@ fil_file_submit(struct fil_iter *iter)
 					fprintf(stderr,
 						"Could not read entire file %s, expected: %lu, "
 						"actual: %ld\n",
-						path, file->size, bytes_read);
+						path, size, bytes_read);
 					return EIO;
 				}
 				bytes_read += err;
-			} while ((uint64_t)bytes_read != file->size);
+			} while ((uint64_t)bytes_read != size);
 
 #ifdef FIL_CUDA_ENABLED
 			if (iter->opts->copy_to_gpu) {
-				err = cudaMemcpy(buffer, dst, file->size, cudaMemcpyHostToDevice);
+				err = cudaMemcpy(buffer, dst, size, cudaMemcpyHostToDevice);
 				if (err) {
 					fprintf(stderr,
 						"Could not copy data to GPU memory, err: %ld\n",
@@ -503,14 +565,14 @@ fil_file_submit(struct fil_iter *iter)
 int
 fil_cufile_async_submit(struct fil_iter *iter)
 {
-	struct xal_inode *file;
+	struct fil_file *file;
 	struct timespec start, end;
 	struct fil_cufile_io *cufile_io;
 	CUfileError_t status;
 	uint32_t buf_id, dev_id;
+	uint64_t size;
 	void *buffer;
-	char *path;
-	int fd, flags, err = 0;
+	int fd, err = 0;
 	off_t offset = 0;
 
 	cufile_io = iter->cufile_io;
@@ -520,23 +582,13 @@ fil_cufile_async_submit(struct fil_iter *iter)
 		struct fil_dev *device = iter->devs[dev_id];
 		buf_id = device->buf++ % device->n_buffers;
 		buffer = device->buffers[buf_id];
-		path = device->file_io->path;
 
 		file = fil_next_file(iter, device, dev_id, buf_id);
 		iter->stats->io++;
 
-		err = xal_inode_path(device->xal, file, path, sizeof(device->file_io->path));
-		if (err < 0) {
-			fprintf(stderr, "xal_inode_path(%s): %d\n", file->name, err);
-			return -err;
-		}
-
-		flags = O_RDONLY | O_DIRECT;
-
-		fd = open(path, flags);
-		if (fd == -1) {
-			err = errno;
-			fprintf(stderr, "Could not open %s, err: %d\n", path, err);
+		err = fil_open_file(iter, device, dev_id, buf_id, file, O_RDONLY | O_DIRECT, &fd,
+				    &size);
+		if (err) {
 			return err;
 		}
 
@@ -549,7 +601,7 @@ fil_cufile_async_submit(struct fil_iter *iter)
 			close(fd);
 			return status.err;
 		}
-		cufile_io->expected[i] = file->size;
+		cufile_io->expected[i] = size;
 		cufile_io->actual[i] = 0;
 
 		status = cuFileReadAsync(cufile_io->handle[i], buffer, &cufile_io->expected[i],

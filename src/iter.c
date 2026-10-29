@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <limits.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,6 +21,13 @@
 // Waiting for xal-server to publish its index
 #define XAL_ATTACH_TIMEOUT_MS 30000
 #define XAL_ATTACH_INTERVAL_MS 100
+
+// Waiting for a re-index, which walks the whole file system
+#define XAL_REINDEX_TIMEOUT_MS 300000
+#define XAL_REINDEX_NOTICE_MS 1000
+
+// Reads of the dataset or a batch before giving up on an index that keeps changing
+#define FIL_READ_ATTEMPTS 3
 
 // Overhead for upcie heap beyond buffer data: covers NVMe queue allocations and internal metadata
 #define UPCIE_HEAP_OVERHEAD (128 << 20)
@@ -164,22 +172,6 @@ gpu_err_close:
 #endif
 }
 
-static int
-find_buffer_size(struct xal *FIL_UNUSED(xal), struct xal_inode *inode, void *cb_args,
-		 int FIL_UNUSED(level))
-{
-	struct fil_stats *stats = (struct fil_stats *)cb_args;
-
-	if (xal_inode_is_file(inode)) {
-		stats->n_files++;
-		stats->avg_file_size += inode->size;
-		if (inode->size > stats->max_file_size) {
-			stats->max_file_size = inode->size;
-		}
-	}
-	return 0;
-}
-
 // Waits while xal-server is still publishing the index
 static int
 _xal_attach(const char *shm_name, struct xal **xal)
@@ -244,98 +236,288 @@ _find_data_dir(struct xal *xal, char *data_dir, struct xal_inode **out)
 	return 0;
 }
 
+// Waits until the index is neither being rewritten nor waiting for a re-index
+static int
+_xal_settle(struct fil_dev *device)
+{
+	struct timespec interval = {.tv_nsec = XAL_ATTACH_INTERVAL_MS * 1000000L};
+
+	for (uint32_t waited = 0;; waited += XAL_ATTACH_INTERVAL_MS) {
+		int seq = xal_get_seq_lock(device->xal);
+
+		if (!(seq & 1) && !xal_is_dirty(device->xal)) {
+			device->xal_seq = seq;
+			return 0;
+		}
+		if (waited == XAL_REINDEX_NOTICE_MS) {
+			fprintf(stderr, "Waiting for xal-server to index %s\n", device->data_dir);
+		}
+		if (waited >= XAL_REINDEX_TIMEOUT_MS) {
+			fprintf(stderr,
+				"The index of %s stayed out of date; is xal-server running?\n",
+				device->data_dir);
+			return ESTALE;
+		}
+		nanosleep(&interval, NULL);
+	}
+}
+
+static bool
+_xal_current(struct fil_dev *device)
+{
+	return xal_get_seq_lock(device->xal) == device->xal_seq && !xal_is_dirty(device->xal);
+}
+
+static void
+_dataset_free(struct fil_dev *device)
+{
+	free(device->files);
+	free(device->paths);
+	device->files = NULL;
+	device->paths = NULL;
+	device->n_files = 0;
+}
+
+struct fil_listing {
+	struct fil_stats *stats;
+	size_t paths_nbytes;
+	size_t paths_cap;
+	uint64_t files_cap;
+};
+
+static int
+_add_file(struct fil_dev *device, struct fil_listing *l, const char *class_name,
+	  const char *file_name, uint32_t label, uint64_t size, struct xal_inode *inode)
+{
+	size_t len = strlen(class_name) + 1 + strlen(file_name) + 1;
+
+	if (l->paths_nbytes + len > l->paths_cap) {
+		size_t cap = (l->paths_nbytes + len) * 2;
+		char *paths = realloc(device->paths, cap);
+
+		if (!paths) {
+			return errno;
+		}
+		device->paths = paths;
+		l->paths_cap = cap;
+	}
+	if (device->n_files == l->files_cap) {
+		uint64_t cap = l->files_cap ? l->files_cap * 2 : 1024;
+		struct fil_file *files = realloc(device->files, cap * sizeof(*files));
+
+		if (!files) {
+			return errno;
+		}
+		device->files = files;
+		l->files_cap = cap;
+	}
+
+	snprintf(device->paths + l->paths_nbytes, len, "%s/%s", class_name, file_name);
+	device->files[device->n_files++] = (struct fil_file){
+		.inode = inode, .path = l->paths_nbytes, .label = label, .seq = device->xal_seq};
+	l->paths_nbytes += len;
+
+	l->stats->n_files++;
+	l->stats->avg_file_size += size;
+	if (size > l->stats->max_file_size) {
+		l->stats->max_file_size = size;
+	}
+	return 0;
+}
+
+// The list refers to the index only by inode, so a re-index does not invalidate it
+static int
+_read_dataset(struct fil_dev *device, struct fil_stats *stats)
+{
+	struct fil_listing l = {.stats = stats};
+	struct xal_dentries classes;
+	struct xal_inode *root;
+	int err;
+
+	err = _xal_settle(device);
+	if (err) {
+		return err;
+	}
+
+	err = _find_data_dir(device->xal, device->data_dir, &root);
+	if (err) {
+		return err;
+	}
+	classes = root->content.dentries;
+
+	for (uint32_t i = 0; i < classes.count; i++) {
+		struct xal_inode *class_dir = xal_inode_at(device->xal, classes.inodes_idx + i);
+		struct xal_dentries dentries;
+
+		if (!class_dir) {
+			return ESTALE;
+		}
+		if (!xal_inode_is_dir(class_dir)) {
+			fprintf(stderr, "Not a class directory: %s/%s\n", device->data_dir,
+				class_dir->name);
+			return EINVAL;
+		}
+		dentries = class_dir->content.dentries;
+
+		for (uint32_t j = 0; j < dentries.count; j++) {
+			struct xal_inode *inode =
+				xal_inode_at(device->xal, dentries.inodes_idx + j);
+
+			if (!inode) {
+				return ESTALE;
+			}
+			if (!xal_inode_is_file(inode)) {
+				fprintf(stderr, "Not a regular file: %s/%s/%s\n", device->data_dir,
+					class_dir->name, inode->name);
+				return EINVAL;
+			}
+			err = _add_file(device, &l, class_dir->name, inode->name, i, inode->size,
+					inode);
+			if (err) {
+				return err;
+			}
+		}
+	}
+
+	return _xal_current(device) ? 0 : ESTALE;
+}
+
+static int
+_read_index(struct fil_iter *iter, struct fil_dev *device, struct fil_stats *stats)
+{
+	int err;
+
+	err = _xal_attach(iter->opts->xal_shm, &device->xal);
+	if (err) {
+		return err;
+	}
+
+	for (uint32_t attempt = 0; attempt < FIL_READ_ATTEMPTS; attempt++) {
+		memset(stats, 0, sizeof(*stats));
+		_dataset_free(device);
+
+		err = _read_dataset(device, stats);
+		if (err != ESTALE) {
+			break;
+		}
+	}
+	return err;
+}
+
 static int
 _xal_setup(struct fil_iter *iter, struct fil_dev *device)
 {
-	struct fil_stats dev_stats = {0};
-	struct xal *xal;
+	struct fil_stats stats = {0};
 	uint32_t xal_blksize;
 	uint64_t buffer_size;
 	int err;
 
-	err = _xal_attach(iter->opts->xal_shm, &xal);
+	device->data_dir = strdup(iter->opts->data_dir);
+	if (!device->data_dir) {
+		return errno;
+	}
+
+	err = _read_index(iter, device, &stats);
+	if (!err && !device->n_files) {
+		fprintf(stderr, "No files in %s\n", device->data_dir);
+		err = ENOENT;
+	}
 	if (err) {
+		fprintf(stderr, "Dataset in %s cannot be read: %d\n", device->data_dir, err);
+		_dataset_free(device);
+		if (device->xal) {
+			xal_close(device->xal);
+			device->xal = NULL;
+		}
+		free(device->data_dir);
+		device->data_dir = NULL;
 		return err;
 	}
 
-	err = _find_data_dir(xal, iter->opts->data_dir, &device->root_inode);
-	if (err) {
-		xal_close(xal);
-		return err;
-	}
-
-	// Walk the dataset to populate the summary stats (n_files, max/avg file
-	// size) and derive buffer_size from the true largest file.
-	err = xal_walk(xal, device->root_inode, find_buffer_size, &dev_stats);
-	if (err) {
-		fprintf(stderr, "xal_walk(find_buffer_size): %d\n", err);
-		xal_close(xal);
-		return -err;
-	}
-	if (!dev_stats.n_files) {
-		fprintf(stderr, "No files in %s\n", iter->opts->data_dir);
-		xal_close(xal);
-		return ENOENT;
-	}
-
-	iter->stats->n_files += dev_stats.n_files;
-	iter->stats->avg_file_size += dev_stats.avg_file_size;
-	if (dev_stats.max_file_size > iter->stats->max_file_size) {
-		iter->stats->max_file_size = dev_stats.max_file_size;
+	iter->stats->n_files += stats.n_files;
+	iter->stats->avg_file_size += stats.avg_file_size;
+	if (stats.max_file_size > iter->stats->max_file_size) {
+		iter->stats->max_file_size = stats.max_file_size;
 	}
 
 	// Align to the file system block size
-	xal_blksize = xal_get_sb_blocksize(xal);
-	buffer_size = (1 + ((dev_stats.max_file_size - 1) / xal_blksize)) * xal_blksize;
+	xal_blksize = xal_get_sb_blocksize(device->xal);
+	buffer_size = (1 + ((stats.max_file_size - 1) / xal_blksize)) * xal_blksize;
 	if (buffer_size > iter->buffer_size) {
 		iter->buffer_size = buffer_size;
 	}
+	return 0;
+}
 
-	// The index keeps each directory's entries sorted by name, so the position
-	// of a class directory is a stable label.
-	device->xal = xal;
+int
+fil_file_path(struct fil_dev *device, struct fil_file *file, char *path, size_t len)
+{
+	if (snprintf(path, len, "%s/%s", device->data_dir, device->paths + file->path) >=
+	    (int)len) {
+		return ENAMETOOLONG;
+	}
+	return 0;
+}
+
+int
+fil_file_inode(struct fil_iter *iter, struct fil_dev *device, struct fil_file *file,
+	       struct xal_inode **inode)
+{
+	char path[PATH_MAX];
+	struct xal_inode *found;
+	int err;
+
+	if (file->seq == device->xal_seq) {
+		*inode = file->inode;
+		return 0;
+	}
+
+	err = fil_file_path(device, file, path, sizeof(path));
+	if (err) {
+		return err;
+	}
+
+	err = xal_get_inode(device->xal, path, &found);
+	if (!_xal_current(device)) {
+		return ESTALE;
+	}
+	if (err) {
+		fprintf(stderr, "%s is gone from the index: %d\n", path, err);
+		return -err;
+	}
+	if (!xal_inode_is_file(found)) {
+		fprintf(stderr, "Not a regular file: %s\n", path);
+		return EINVAL;
+	}
+	if (found->size > iter->buffer_size) {
+		fprintf(stderr, "%s grew to %lu bytes, past its buffer of %lu\n", path,
+			found->size, iter->buffer_size);
+		return EFBIG;
+	}
+
+	file->inode = found;
+	file->seq = device->xal_seq;
+	*inode = found;
 	return 0;
 }
 
 static int
-_create_entries(struct fil_iter *iter)
+_create_order(struct fil_iter *iter)
 {
-	struct fil_entry *entries;
-	struct xal_inode *inode;
-	struct xal *xal = iter->devs[0]->xal;
-	struct xal_dentries root_dentries = iter->devs[0]->root_inode->content.dentries;
-	uint64_t n_entries = 0;
-	uint32_t n_files;
-	int err;
-	int k;
+	uint64_t n_entries = iter->devs[0]->n_files;
+	uint64_t *order;
 
-	for (uint32_t i = 0; i < root_dentries.count; i++) {
-		inode = xal_inode_at(xal, root_dentries.inodes_idx + i);
-		n_entries += inode->content.dentries.count;
+	order = malloc(sizeof(*order) * n_entries);
+	if (!order) {
+		fprintf(stderr, "Could not allocate the order of the dataset: %d\n", errno);
+		return errno;
+	}
+	for (uint64_t k = 0; k < n_entries; k++) {
+		order[k] = k;
 	}
 
-	entries = malloc(sizeof(struct fil_entry) * n_entries);
-	if (!entries) {
-		err = errno;
-		fprintf(stderr, "Could not allocate entries: %d\n", err);
-		return err;
-	}
-
-	k = 0;
-	for (uint32_t i = 0; i < root_dentries.count; i++) {
-		inode = xal_inode_at(xal, root_dentries.inodes_idx + i);
-		n_files = inode->content.dentries.count;
-
-		for (uint32_t j = 0; j < n_files; j++) {
-			entries[k].dir = i;
-			entries[k].file = j;
-			k++;
-		}
-	}
-
-	iter->data->entries = entries;
+	iter->data->order = order;
 	iter->data->n_entries = n_entries;
-
 	return 0;
 }
 
@@ -690,6 +872,8 @@ fil_term(struct fil_iter *iter)
 			free(device->file_io);
 		}
 		free(device->buffers);
+		_dataset_free(device);
+		free(device->data_dir);
 		free(device);
 	}
 #ifdef FIL_CUDA_ENABLED
@@ -705,7 +889,7 @@ fil_term(struct fil_iter *iter)
 	}
 #endif
 	if (iter->data) {
-		free(iter->data->entries);
+		free(iter->data->order);
 		free(iter->data);
 	}
 	free(iter->opts);
@@ -889,18 +1073,64 @@ fil_init(struct fil_iter **iter, char **dev_uris, uint32_t n_devs, struct fil_op
 		break;
 	}
 
-	// Create an entry for every file in every directory
-	err = _create_entries(_iter);
+	err = _create_order(_iter);
 	if (err) {
 		fil_term(_iter);
 		return err;
 	}
 
-	FIL_SHUFFLE(_iter->data->entries, struct fil_entry, _iter->data->n_entries, uint64_t);
+	FIL_SHUFFLE(_iter->data->order, uint64_t, _iter->data->n_entries, uint64_t);
 
 	(*iter) = _iter;
 
 	return 0;
+}
+
+// A re-index racing the reads can give their blocks to other files, so the batch is checked
+// once they completed, and read again
+static int
+_read_batch(struct fil_iter *iter)
+{
+	uint64_t index = iter->data->index, bytes = iter->stats->bytes, io = iter->stats->io;
+	uint64_t bufs[iter->n_devs];
+	int err;
+
+	for (uint32_t i = 0; i < iter->n_devs; i++) {
+		bufs[i] = iter->devs[i]->buf;
+	}
+
+	for (uint32_t attempt = 0; attempt < FIL_READ_ATTEMPTS; attempt++) {
+		bool current = true;
+
+		for (uint32_t i = 0; i < iter->n_devs; i++) {
+			err = _xal_settle(iter->devs[i]);
+			if (err) {
+				return err;
+			}
+		}
+
+		err = iter->io_fn(iter);
+		if (err && err != ESTALE) {
+			return err;
+		}
+
+		for (uint32_t i = 0; i < iter->n_devs; i++) {
+			current = current && _xal_current(iter->devs[i]);
+		}
+		if (!err && current) {
+			return 0;
+		}
+
+		iter->data->index = index;
+		iter->stats->bytes = bytes;
+		iter->stats->io = io;
+		for (uint32_t i = 0; i < iter->n_devs; i++) {
+			iter->devs[i]->buf = bufs[i];
+		}
+	}
+
+	fprintf(stderr, "The index changed during %u reads of the batch\n", FIL_READ_ATTEMPTS);
+	return ESTALE;
 }
 
 int
@@ -908,13 +1138,12 @@ fil_next(struct fil_iter *iter, struct fil_output **output)
 {
 	int err;
 
-	if (iter->data->entries && iter->data->index >= iter->data->n_entries) {
+	if (iter->data->index >= iter->data->n_entries) {
 		iter->data->index = 0;
-		FIL_SHUFFLE(iter->data->entries, struct fil_entry, iter->data->n_entries,
-			    uint64_t);
+		FIL_SHUFFLE(iter->data->order, uint64_t, iter->data->n_entries, uint64_t);
 	}
 
-	err = iter->io_fn(iter);
+	err = iter->type == FIL_FILE ? iter->io_fn(iter) : _read_batch(iter);
 	if (err) {
 		fprintf(stderr, "Data reading failed, err: %d\n", err);
 		return err;

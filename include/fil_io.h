@@ -8,13 +8,17 @@
 #include <limits.h>
 #include <stdint.h>
 
-struct fil_entry {
-	uint64_t dir;
-	uint64_t file;
+struct xal_inode;
+
+struct fil_file {
+	struct xal_inode *inode; ///< Valid while 'seq' is current
+	size_t path;             ///< Offset into the device's paths
+	uint32_t label;          ///< Index of the class directory
+	int seq;                 ///< Sequence lock 'inode' was looked up under
 };
 
 struct fil_data {
-	struct fil_entry *entries;
+	uint64_t *order; ///< Positions in the list of files, shuffled each epoch
 	uint64_t n_entries;
 	uint64_t index;
 };
