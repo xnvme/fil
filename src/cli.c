@@ -26,6 +26,8 @@ print_help(const char *name)
 			"system holding data-dir\n");
 	fprintf(stderr, "\t --backend \t | \t The backend to use for reading files (aisio-cpu "
 			"[default], aisio-gpu, aisio-p2p, posix, cufile)\n");
+	fprintf(stderr, "\t --homi-id \t | \t The id of the homi server holding the device. "
+			"Required for backends: 'aisio-cpu', 'aisio-gpu' and 'aisio-p2p'\n");
 	fprintf(stderr, "\t --iosize \t | \t The number of bytes per I/O (default = 4096). Only "
 			"relevant for backends: 'aisio-cpu' and 'aisio-gpu'\n");
 	fprintf(stderr, "\t --gpu-nqueues \t | \t The number of GPU queues to create (default = "
@@ -62,6 +64,12 @@ parse_args(int argc, char *argv[], struct fil_cli_args *args, struct fil_opts *o
 			opts->xal_shm = argv[++i];
 		} else if (strcmp(argv[i], "--backend") == 0) {
 			opts->backend = argv[++i];
+		} else if (strcmp(argv[i], "--homi-id") == 0) {
+			opts->homi_id = strtoul(argv[++i], (char **)NULL, 10);
+			if (opts->homi_id == 0) {
+				fprintf(stderr, "Invalid homi id: %s\n", argv[i]);
+				return -EINVAL;
+			}
 		} else if (strcmp(argv[i], "--iosize") == 0) {
 			opts->iosize = strtoul(argv[++i], (char **)NULL, 10);
 			if (opts->iosize == 0) {

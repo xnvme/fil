@@ -40,9 +40,10 @@ _xnvme_setup(struct fil_iter *iter, struct fil_dev *device, const char *uri)
 	CUfileError_t status;
 #endif
 
+	opts.homi_id = iter->opts->homi_id;
+
 	if (strcmp(backend, "aisio-cpu") == 0) {
 		opts.be = "upcie";
-		opts.host_heap_size = heap_size;
 		iter->type = FIL_CPU;
 	} else if (strcmp(backend, "aisio-p2p") == 0) {
 		opts.be = "upcie-cuda";
@@ -74,6 +75,10 @@ _xnvme_setup(struct fil_iter *iter, struct fil_dev *device, const char *uri)
 	if (!dev) {
 		err = errno;
 		fprintf(stderr, "xnvme_dev_open(%s): %d\n", opts.be, err);
+		if (err == ENOENT) {
+			fprintf(stderr, "Is a homi server running with --homi-id %u?\n",
+				opts.homi_id);
+		}
 		return err;
 	}
 
@@ -453,6 +458,12 @@ _alloc(struct fil_iter *iter, uint32_t n_buffers)
 			if (!device->buffers[j]) {
 				err = errno;
 				fprintf(stderr, "Could not allocate buffers[%d]: %d\n", i, err);
+				if (iter->type == FIL_CPU) {
+					fprintf(stderr,
+						"The homi server's host heap must hold %u buffers "
+						"of %lu bytes\n",
+						iter->opts->batch_size, iter->buffer_size);
+				}
 				return err;
 			}
 			if (iter->type == FIL_CPU && iter->opts->copy_to_gpu) {
@@ -758,6 +769,11 @@ fil_init(struct fil_iter **iter, char **dev_uris, uint32_t n_devs, struct fil_op
 	}
 #endif
 
+	if (!opts->homi_id && strncmp(opts->backend, "aisio-", strlen("aisio-")) == 0) {
+		fprintf(stderr, "homi_id is required for the aisio backends\n");
+		return EINVAL;
+	}
+
 	if (opts->buffered && strcmp(opts->backend, "posix") != 0) {
 		fprintf(stderr, "opts->buffered == true is only compatible with POSIX backend");
 		return EINVAL;
@@ -914,6 +930,7 @@ fil_opts_default()
 	struct fil_opts opts = {.data_dir = "",
 				.xal_shm = "",
 				.backend = "aisio-cpu",
+				.homi_id = 0,
 				.iosize = 4096,
 				.gpu_nqueues = 128,
 				.queue_depth = 1024,

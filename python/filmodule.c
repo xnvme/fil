@@ -26,17 +26,17 @@ init(PyObject *self, PyObject *args, PyObject *keywds)
 	}
 
 	// 'async' is a reserved word in Python, so it is exposed under the keyword 'async_'.
-	static char *kwlist[] = {"dev_uri",  "data_dir",    "xal_shm",       "backend",
-				 "iosize",   "gpu_nqueues", "queue_depth",   "batch_size",
-				 "buffered", "async_",      "register_bufs", "copy_to_gpu",
-				 NULL};
+	static char *kwlist[] = {"dev_uri",     "data_dir", "xal_shm",     "backend",
+				 "homi_id",     "iosize",   "gpu_nqueues", "queue_depth",
+				 "batch_size",  "buffered", "async_",      "register_bufs",
+				 "copy_to_gpu", NULL};
 
 	// Bools are parsed via 'p' into ints, then folded back into opts.
-	if (!PyArg_ParseTupleAndKeywords(args, keywds, "s|$sssiiiipppp", kwlist, &dev_uri,
+	if (!PyArg_ParseTupleAndKeywords(args, keywds, "s|$sssIiiiipppp", kwlist, &dev_uri,
 					 &opts.data_dir, &opts.xal_shm, &opts.backend,
-					 &opts.iosize, &opts.gpu_nqueues, &opts.queue_depth,
-					 &opts.batch_size, &buffered, &use_async, &register_bufs,
-					 &copy_to_gpu)) {
+					 &opts.homi_id, &opts.iosize, &opts.gpu_nqueues,
+					 &opts.queue_depth, &opts.batch_size, &buffered,
+					 &use_async, &register_bufs, &copy_to_gpu)) {
 		return NULL;
 	}
 	opts.buffered = buffered;
