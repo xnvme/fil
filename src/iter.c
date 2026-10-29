@@ -70,20 +70,7 @@ _xnvme_setup(struct fil_iter *iter, struct fil_dev *device, const char *uri)
 	CUfileError_t status;
 #endif
 
-	if (strcmp(backend, "io_uring") == 0) {
-		opts.be = "linux";
-		opts.async = "io_uring";
-		opts.direct = 0;
-		iter->type = FIL_CPU;
-	} else if (strcmp(backend, "io_uring_direct") == 0) {
-		opts.be = "linux";
-		opts.async = "io_uring";
-		opts.direct = 1;
-		iter->type = FIL_CPU;
-	} else if (strcmp(backend, "spdk") == 0) {
-		opts.be = "spdk";
-		iter->type = FIL_CPU;
-	} else if (strcmp(backend, "aisio-cpu") == 0) {
+	if (strcmp(backend, "aisio-cpu") == 0) {
 		opts.be = "upcie";
 		opts.host_heap_size = heap_size;
 		iter->type = FIL_CPU;
