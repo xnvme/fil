@@ -12,7 +12,6 @@ struct fil_time;
 
 struct fil_dev {
 	struct xnvme_dev *dev;
-	struct xnvme_dev *cuda_dev;
 	struct xnvme_queue *queue;
 	struct xnvme_cuda_queue **cuda_queues;
 	struct xnvme_cuda_queue **cuda_queues_dev;

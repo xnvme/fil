@@ -27,27 +27,6 @@
 #define UPCIE_HEAP_SIZE(buf_total) \
 	(((buf_total) + UPCIE_HEAP_OVERHEAD + UPCIE_HEAP_ALIGN - 1) & ~(UPCIE_HEAP_ALIGN - 1))
 
-// Opens a second handle on the device with the CUDA-backed upcie backend,
-// sizing its device heap to hold the batch. Used by the aisio-gpu and
-// aisio-p2p backends. On failure the caller still owns the primary handle.
-static int
-open_cuda_dev(const char *uri, size_t heap_size, struct xnvme_dev **out)
-{
-	struct xnvme_opts cuda_opts = xnvme_opts_default();
-	struct xnvme_dev *cuda_dev;
-
-	cuda_opts.be = "upcie-cuda";
-	cuda_opts.device_heap_size = heap_size;
-	cuda_dev = xnvme_dev_open(uri, &cuda_opts);
-	if (!cuda_dev) {
-		int err = errno;
-		fprintf(stderr, "xnvme_dev_open(upcie-cuda): %d\n", err);
-		return err;
-	}
-	*out = cuda_dev;
-	return 0;
-}
-
 static int
 _xnvme_setup(struct fil_iter *iter, struct fil_dev *device, const char *uri)
 {
@@ -65,10 +44,12 @@ _xnvme_setup(struct fil_iter *iter, struct fil_dev *device, const char *uri)
 		opts.host_heap_size = heap_size;
 		iter->type = FIL_CPU;
 	} else if (strcmp(backend, "aisio-p2p") == 0) {
-		opts.be = "upcie";
+		opts.be = "upcie-cuda";
+		opts.device_heap_size = heap_size;
 		iter->type = FIL_P2P;
 	} else if (strcmp(backend, "aisio-gpu") == 0) {
-		opts.be = "upcie";
+		opts.be = "upcie-cuda";
+		opts.device_heap_size = heap_size;
 		iter->type = FIL_GPU;
 	} else if (strcmp(backend, "posix") == 0) {
 		iter->type = FIL_FILE;
@@ -91,7 +72,7 @@ _xnvme_setup(struct fil_iter *iter, struct fil_dev *device, const char *uri)
 	dev = xnvme_dev_open(uri, &opts);
 	if (!dev) {
 		err = errno;
-		fprintf(stderr, "xnvme_dev_open(): %d\n", err);
+		fprintf(stderr, "xnvme_dev_open(%s): %d\n", opts.be, err);
 		return err;
 	}
 
@@ -101,31 +82,25 @@ _xnvme_setup(struct fil_iter *iter, struct fil_dev *device, const char *uri)
 		fprintf(stderr, "xnvme_dev_derive_geo(): %d\n", err);
 		return err;
 	}
+	device->nsid = xnvme_dev_get_nsid(dev);
 
 	if (iter->type == FIL_GPU) {
 #ifdef FIL_CUDA_ENABLED
-		err = open_cuda_dev(uri, heap_size, &device->cuda_dev);
-		if (err) {
-			xnvme_dev_close(dev);
-			return err;
-		}
-		device->nsid = xnvme_dev_get_nsid(device->cuda_dev);
 		device->cuda_queues =
 			malloc(sizeof(*device->cuda_queues) * iter->opts->gpu_nqueues);
 		if (!device->cuda_queues) {
 			err = errno;
 			fprintf(stderr, "malloc(cuda_queues): %d\n", err);
-			goto gpu_err_close_cuda;
+			goto gpu_err_close;
 		}
 
 		for (uint32_t q = 0; q < iter->opts->gpu_nqueues; q++) {
-			err = xnvme_cuda_queue_create(device->cuda_dev, iter->opts->queue_depth, 0,
+			err = xnvme_cuda_queue_create(dev, iter->opts->queue_depth, 0,
 						      &device->cuda_queues[q]);
 			if (err) {
 				fprintf(stderr, "xnvme_cuda_queue_create(): %d\n", err);
 				for (uint32_t k = 0; k < q; k++) {
-					xnvme_cuda_queue_destroy(device->cuda_dev,
-								 device->cuda_queues[k]);
+					xnvme_cuda_queue_destroy(dev, device->cuda_queues[k]);
 				}
 				goto gpu_err_free_queues;
 			}
@@ -147,37 +122,18 @@ _xnvme_setup(struct fil_iter *iter, struct fil_dev *device, const char *uri)
 			goto gpu_err_destroy_queues;
 		}
 #endif
-	} else if (iter->type == FIL_P2P) {
-		err = open_cuda_dev(uri, heap_size, &device->cuda_dev);
-		if (err) {
-			xnvme_dev_close(dev);
-			return err;
-		}
-		err = xnvme_queue_init(device->cuda_dev, iter->opts->queue_depth, 0,
-				       &device->queue);
-		if (err) {
-			xnvme_dev_close(device->cuda_dev);
-			xnvme_dev_close(dev);
-			fprintf(stderr, "xnvme_queue_init(): %d\n", err);
-			return err;
-		}
-	} else if (iter->type == FIL_CPU) {
+	} else {
 		err = xnvme_queue_init(dev, iter->opts->queue_depth, 0, &device->queue);
 		if (err) {
 			xnvme_dev_close(dev);
 			fprintf(stderr, "xnvme_queue_init(): %d\n", err);
 			return err;
 		}
-	}
 
-	if (iter->type == FIL_CPU || iter->type == FIL_P2P) {
 		err = xnvme_queue_set_cb(device->queue, fil_io_cb, &device->io_errors);
 		if (err) {
 			fprintf(stderr, "xnvme_queue_set_cb(): %d\n", err);
 			xnvme_queue_term(device->queue);
-			if (iter->type == FIL_P2P) {
-				xnvme_dev_close(device->cuda_dev);
-			}
 			xnvme_dev_close(dev);
 			return err;
 		}
@@ -189,12 +145,11 @@ _xnvme_setup(struct fil_iter *iter, struct fil_dev *device, const char *uri)
 #ifdef FIL_CUDA_ENABLED
 gpu_err_destroy_queues:
 	for (uint32_t k = 0; k < iter->opts->gpu_nqueues; k++) {
-		xnvme_cuda_queue_destroy(device->cuda_dev, device->cuda_queues[k]);
+		xnvme_cuda_queue_destroy(dev, device->cuda_queues[k]);
 	}
 gpu_err_free_queues:
 	free(device->cuda_queues);
-gpu_err_close_cuda:
-	xnvme_dev_close(device->cuda_dev);
+gpu_err_close:
 	xnvme_dev_close(dev);
 	return err;
 #endif
@@ -426,7 +381,7 @@ _alloc(struct fil_iter *iter, uint32_t n_buffers)
 			case FIL_GPU:
 			case FIL_P2P:
 				device->buffers[j] =
-					xnvme_buf_alloc(device->cuda_dev, iter->buffer_size);
+					xnvme_buf_alloc(device->dev, iter->buffer_size);
 				break;
 			case FIL_CPU:
 				device->buffers[j] =
@@ -557,8 +512,7 @@ _alloc(struct fil_iter *iter, uint32_t n_buffers)
 
 			for (uint32_t j = 0; j < device->n_buffers; j++) {
 				uint64_t prp1;
-				err = xnvme_buf_vtophys(device->cuda_dev, device->buffers[j],
-							&prp1);
+				err = xnvme_buf_vtophys(device->dev, device->buffers[j], &prp1);
 				if (err) {
 					free(device->gpu_io.prp1_base);
 					device->gpu_io.prp1_base = NULL;
@@ -651,14 +605,13 @@ fil_term(struct fil_iter *iter)
 		case FIL_GPU:
 #ifdef FIL_CUDA_ENABLED
 			for (uint32_t j = 0; j < device->n_buffers; j++) {
-				xnvme_buf_free(device->cuda_dev, device->buffers[j]);
+				xnvme_buf_free(device->dev, device->buffers[j]);
 			}
 			cudaFree(device->cuda_queues_dev);
 			for (uint32_t q = 0; q < iter->opts->gpu_nqueues; q++) {
-				xnvme_cuda_queue_destroy(device->cuda_dev, device->cuda_queues[q]);
+				xnvme_cuda_queue_destroy(device->dev, device->cuda_queues[q]);
 			}
 			free(device->cuda_queues);
-			xnvme_dev_close(device->cuda_dev);
 			cudaFreeHost(device->gpu_io.cmds_host);
 			cudaFree(device->gpu_io.cmds_dev);
 			free(device->gpu_io.prp1_base);
@@ -666,10 +619,9 @@ fil_term(struct fil_iter *iter)
 			break;
 		case FIL_P2P:
 			for (uint32_t j = 0; j < device->n_buffers; j++) {
-				xnvme_buf_free(device->cuda_dev, device->buffers[j]);
+				xnvme_buf_free(device->dev, device->buffers[j]);
 			}
 			xnvme_queue_term(device->queue);
-			xnvme_dev_close(device->cuda_dev);
 			break;
 		case FIL_CPU:
 			for (uint32_t j = 0; j < device->n_buffers; j++) {
