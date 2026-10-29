@@ -105,7 +105,7 @@ fil_get_stats(struct fil_iter *iter);
  *
  * @param iter Pointer to where to initialize the FIL iterator
  * @param dev_uris Paths to devices (eg. /dev/nvme0n1 or 0000:01:00.0)
- * @param n_devs The number of devices
+ * @param n_devs The number of devices; must be 1
  * @param opts Options (struct fil_opts) for the FIL iterator
  *
  * @returns 0 on sucess, otherwise `errno`

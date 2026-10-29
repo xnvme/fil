@@ -792,6 +792,11 @@ fil_init(struct fil_iter **iter, char **dev_uris, uint32_t n_devs, struct fil_op
 	srand(time(NULL));
 	int err;
 
+	if (n_devs != 1) {
+		fprintf(stderr, "fil reads from one device, not %u\n", n_devs);
+		return EINVAL;
+	}
+
 	if (opts->batch_size % n_devs != 0) {
 		fprintf(stderr, "Batch size (%u) not divisible by number of devices (%u)\n",
 			opts->batch_size, n_devs);

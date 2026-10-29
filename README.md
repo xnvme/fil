@@ -39,11 +39,10 @@ name (not path) and must be unique across the device.
 ## CLI
 
 The `filperf` CLI runs benchmarks and reports throughput metrics. Progress is printed
-as CSV every second: elapsed time, batches completed, IOPS, and MiB/s. Multiple
-devices can be specified as a comma-separated list.
+as CSV every second: elapsed time, batches completed, IOPS, and MiB/s.
 
 ```
-filperf <device-uri>[,<device-uri>,...] [options]
+filperf <device-uri> [options]
 ```
 
 ### Options

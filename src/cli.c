@@ -18,7 +18,7 @@ struct fil_cli_args {
 void
 print_help(const char *name)
 {
-	fprintf(stderr, "Usage: %s <comma-separated device uris> [<args>] \n", name);
+	fprintf(stderr, "Usage: %s <device uri> [<args>] \n", name);
 	fprintf(stderr, "Where <args> include \n");
 	fprintf(stderr,
 		"\t --data-dir \t | \t A directory containing subdirectories with files\n");
@@ -141,6 +141,11 @@ parse_args(int argc, char *argv[], struct fil_cli_args *args, struct fil_opts *o
 
 	if (args->dev_uris == NULL) {
 		fprintf(stderr, "Error: device uri is required\n");
+		return -EINVAL;
+	}
+
+	if (args->n_devs > 1) {
+		fprintf(stderr, "fil reads from one device\n");
 		return -EINVAL;
 	}
 
