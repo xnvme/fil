@@ -24,6 +24,7 @@ print_help(const char *name)
 			"subdirectories with files\n");
 	fprintf(stderr, "\t --xal-shm \t | \t The name of the xal-server index of the file "
 			"system holding data-dir\n");
+	fprintf(stderr, "\t --nsid \t | \t The namespace (default = 1)\n");
 	fprintf(stderr, "\t --backend \t | \t The backend to use for reading files (aisio-cpu "
 			"[default], aisio-gpu, aisio-p2p, posix, cufile)\n");
 	fprintf(stderr, "\t --homi-id \t | \t The id of the homi server holding the device. "
@@ -62,6 +63,12 @@ parse_args(int argc, char *argv[], struct fil_cli_args *args, struct fil_opts *o
 			opts->data_dir = argv[++i];
 		} else if (strcmp(argv[i], "--xal-shm") == 0) {
 			opts->xal_shm = argv[++i];
+		} else if (strcmp(argv[i], "--nsid") == 0) {
+			opts->nsid = strtoul(argv[++i], (char **)NULL, 10);
+			if (opts->nsid == 0) {
+				fprintf(stderr, "Invalid nsid: %s\n", argv[i]);
+				return -EINVAL;
+			}
 		} else if (strcmp(argv[i], "--backend") == 0) {
 			opts->backend = argv[++i];
 		} else if (strcmp(argv[i], "--homi-id") == 0) {

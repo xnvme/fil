@@ -51,6 +51,7 @@ filperf <device-uri> --data-dir <path> [options]
 |---|---|---|
 | `--data-dir <path>` | _(required)_ | Absolute path to the directory containing class subdirectories |
 | `--xal-shm <name>` | _(required)_ | Name of the `xal-server` index |
+| `--nsid <n>` | `1` | Namespace |
 | `--backend <name>` | `aisio-cpu` | I/O backend: `aisio-cpu`, `aisio-gpu`, `aisio-p2p`, `posix`, `cufile` |
 | `--homi-id <n>` | _(none)_ | Id of the `homi` server holding the device; required for the `aisio` backends |
 | `--batch-size <n>` | `1` | Number of files per batch |

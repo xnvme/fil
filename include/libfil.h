@@ -32,6 +32,7 @@ struct fil_opts {
 	char *xal_shm;    ///< Name of the xal-server index; aisio backends only
 	char *backend;    ///< The backend to use
 	uint32_t homi_id; ///< The homi server the aisio backends attach to
+	uint32_t nsid;    ///< The namespace
 	uint64_t iosize;  ///< The number of bytes per I/O
 	uint32_t gpu_nqueues; ///< The number of GPU queues to create
 	uint32_t queue_depth; ///< The NVMe queue depth
@@ -77,6 +78,7 @@ struct fil_output {
  * xal_shm = ""
  * backend = "aisio-cpu"
  * homi_id = 0
+ * nsid = 1
  * iosize = 4096
  * gpu_nqueues = 128
  * queue_depth = 1024

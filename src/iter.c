@@ -41,6 +41,7 @@ _xnvme_setup(struct fil_iter *iter, struct fil_dev *device, const char *uri)
 #endif
 
 	opts.homi_id = iter->opts->homi_id;
+	opts.nsid = iter->opts->nsid;
 
 	if (strcmp(backend, "aisio-cpu") == 0) {
 		opts.be = "upcie";
@@ -931,6 +932,7 @@ fil_opts_default()
 				.xal_shm = "",
 				.backend = "aisio-cpu",
 				.homi_id = 0,
+				.nsid = 1,
 				.iosize = 4096,
 				.gpu_nqueues = 128,
 				.queue_depth = 1024,
