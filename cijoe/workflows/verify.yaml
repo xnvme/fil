@@ -1,0 +1,160 @@
+---
+doc: |
+  Build and install fil and its dependencies from source on the target
+
+  * Transfers the fil checkout to the target
+  * Installs system packages via toolbox/pkgs and the CUDA toolkit
+  * Retrieves xNVMe and xal at the versions given by the config, then builds
+    and installs them
+  * Builds fil as debug with warnings as errors, with sub-timers enabled, and
+    as release; the release build is installed
+  * Builds the Python binding against the installed fil and imports it
+  * Formats config.fil.testing.dev with XFS, populates it with a dataset, and
+    tests reading it with the posix backend, which needs no GPU
+
+  Run with a config giving the target transport, as root, and configs/fil.toml:
+
+    cijoe --monitor \
+      -c configs/qemu_guest.toml \
+      -c configs/fil.toml \
+      workflows/verify.yaml
+
+steps:
+- name: sysinfo
+  run: |
+    uname -a
+    cat /etc/os-release
+    nproc
+    free -m
+
+# Copy the fil checkout, uncommitted changes included, so that the target builds
+# what is checked out and not what was last pushed. cijoe runs from cijoe/.
+- name: fil_source_pack
+  run: |
+    git -C .. ls-files -z --cached --others --exclude-standard | tar -C .. --null -T - -czf /tmp/fil-source.tar.gz
+  with:
+    transport: initiator
+
+- name: fil_source_put
+  uses: core.put
+  with:
+    src: /tmp/fil-source.tar.gz
+    dst: /tmp/fil-source.tar.gz
+
+- name: fil_source_unpack
+  run: |
+    rm -rf {{ config.fil.source }}
+    mkdir -p {{ config.fil.source }}
+    tar -xzf /tmp/fil-source.tar.gz -C {{ config.fil.source }}
+
+- name: pkgs
+  run: |
+    {{ config.fil.source }}/toolbox/pkgs/{{ config.os.distro }}-{{ config.os.version }}.sh
+
+# The parts of the CUDA toolkit that fil and xNVMe compile and link against, from
+# NVIDIA's apt repository. Without an NVIDIA driver there is no libcuda.so.1, and
+# the stub of the toolkit is made loadable under that name instead; everything not
+# calling CUDA then still runs.
+- name: cuda
+  run: |
+    wget -qO /tmp/cuda-keyring.deb https://developer.download.nvidia.com/compute/cuda/repos/{{ config.cuda.apt_distro }}/x86_64/cuda-keyring_1.1-1_all.deb
+    dpkg -i /tmp/cuda-keyring.deb
+    apt-get -qy update
+    DEBIAN_FRONTEND=noninteractive apt-get -qy install cuda-cudart-dev-{{ config.cuda.version }} cuda-driver-dev-{{ config.cuda.version }} cuda-nvcc-{{ config.cuda.version }} libcufile-dev-{{ config.cuda.version }}
+    ln -sfn /usr/local/cuda-{{ config.cuda.version | replace('-', '.') }} {{ config.cuda.path }}
+    echo {{ config.cuda.path }}/targets/x86_64-linux/lib > /etc/ld.so.conf.d/cuda.conf
+    ldconfig
+    grep -q {{ config.cuda.path }}/bin /etc/environment || sed -i 's|^PATH="|PATH="{{ config.cuda.path }}/bin:|' /etc/environment
+    nvcc --version
+    ldconfig -p | grep -q 'libcuda.so.1 ' || { mkdir -p /usr/local/cuda-stub && ln -sfn {{ config.cuda.path }}/targets/x86_64-linux/lib/stubs/libcuda.so /usr/local/cuda-stub/libcuda.so.1 && echo /usr/local/cuda-stub > /etc/ld.so.conf.d/cuda-stub.conf && ldconfig; }
+
+- name: fetch_sources
+  uses: core.repository_prep
+
+- name: xnvme_build
+  run: |
+    git -C {{ config.xnvme.repository.path }} log -1 --oneline
+    rm -rf {{ config.xnvme.repository.path }}/builddir
+    meson setup {{ config.xnvme.repository.path }}/builddir {{ config.xnvme.repository.path }} {{ config.xnvme.build.options }}
+    meson compile -C {{ config.xnvme.repository.path }}/builddir
+
+- name: xnvme_install
+  run: |
+    meson install -C {{ config.xnvme.repository.path }}/builddir --no-rebuild
+    ldconfig
+    pkg-config --modversion xnvme
+
+- name: xal_build
+  run: |
+    git -C {{ config.xal.repository.path }} log -1 --oneline
+    rm -rf {{ config.xal.repository.path }}/builddir
+    meson setup {{ config.xal.repository.path }}/builddir {{ config.xal.repository.path }}
+    meson compile -C {{ config.xal.repository.path }}/builddir
+
+- name: xal_install
+  run: |
+    meson install -C {{ config.xal.repository.path }}/builddir --no-rebuild
+    ldconfig
+    pkg-config --modversion xal
+
+- name: fil_build_debug
+  run: |
+    rm -rf {{ config.fil.source }}/builddir-debug
+    meson setup {{ config.fil.source }}/builddir-debug {{ config.fil.source }} --buildtype=debug -Dwerror=true
+    meson compile -C {{ config.fil.source }}/builddir-debug
+
+- name: fil_build_subtime
+  run: |
+    rm -rf {{ config.fil.source }}/builddir-subtime
+    meson setup {{ config.fil.source }}/builddir-subtime {{ config.fil.source }} -Dsubtime=true
+    meson compile -C {{ config.fil.source }}/builddir-subtime
+
+- name: fil_build
+  run: |
+    make -C {{ config.fil.source }} clean config build
+
+- name: fil_install
+  run: |
+    meson install -C {{ config.fil.source }}/builddir --no-rebuild
+    ldconfig
+    filperf --help
+
+- name: fil_python
+  run: |
+    rm -rf {{ config.fil.venv }}
+    python3 -m venv {{ config.fil.venv }}
+    {{ config.fil.venv }}/bin/pip install {{ config.fil.source }}/python
+    {{ config.fil.venv }}/bin/python -c "import fil; print(fil.__file__)"
+
+# A mount left by an earlier run is removed; a device mounted anywhere else is
+# refused, as it likely holds data that is not meant for testing
+- name: prep_xfs
+  run: |
+    umount {{ config.fil.testing.mountpoint }} || true
+    ! findmnt --source {{ config.fil.testing.dev }}
+    mkfs.xfs -f {{ config.fil.testing.dev }}
+    mkdir -p {{ config.fil.testing.mountpoint }}
+    mount {{ config.fil.testing.dev }} {{ config.fil.testing.mountpoint }}
+
+# Populate the file system with a dataset, then mount it again read-only, so that
+# all meta-data is on the device when fil parses it from there
+#
+# Two more files are grown by interleaved direct appends, so that each spans many
+# extents; a buffered tail leaves each with a partial last block. The step fails
+# if they do not end up fragmented.
+- name: prep_dataset
+  run: |
+    python3 {{ config.fil.source }}/cijoe/auxiliary/populate_dataset.py --mnt {{ config.fil.testing.mountpoint }} --data-dir {{ config.fil.testing.data_dir }}
+    for i in $(seq 16); do for f in frag_a frag_b; do dd if=/dev/urandom of={{ config.fil.testing.mountpoint }}/{{ config.fil.testing.data_dir }}/class_0/$f bs=4096 count=1 oflag=direct,append conv=notrunc status=none || exit 1; done; done
+    for f in frag_a frag_b; do head -c 1234 /dev/urandom >> {{ config.fil.testing.mountpoint }}/{{ config.fil.testing.data_dir }}/class_0/$f; done
+    for f in frag_a frag_b; do filefrag {{ config.fil.testing.mountpoint }}/{{ config.fil.testing.data_dir }}/class_0/$f; [ "$(filefrag {{ config.fil.testing.mountpoint }}/{{ config.fil.testing.data_dir }}/class_0/$f | awk '{print $2}')" -ge 2 ] || exit 1; done
+    find {{ config.fil.testing.mountpoint }}/{{ config.fil.testing.data_dir }} -type f | wc -l
+    umount {{ config.fil.testing.mountpoint }}
+    mount -o ro {{ config.fil.testing.dev }} {{ config.fil.testing.mountpoint }}
+
+- name: test
+  uses: core.testrunner
+  with:
+    run_local: true
+    random_order: false
+    args: "tests"

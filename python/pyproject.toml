@@ -5,3 +5,4 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "fil"
 version = "0.3.4"
+dependencies = ["numpy"]
