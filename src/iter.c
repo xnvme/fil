@@ -32,7 +32,8 @@ _xnvme_setup(struct fil_iter *iter, struct fil_dev *device, const char *uri)
 {
 	const char *backend = iter->opts->backend;
 	struct xnvme_opts opts = xnvme_opts_default();
-	size_t heap_size = UPCIE_HEAP_SIZE(iter->opts->max_file_size * iter->opts->batch_size);
+	size_t heap_size =
+		UPCIE_HEAP_SIZE(iter->buffer_size * (iter->opts->batch_size / iter->n_devs));
 	struct xnvme_dev *dev;
 	int err;
 #ifdef FIL_CUDA_ENABLED
@@ -134,6 +135,7 @@ _xnvme_setup(struct fil_iter *iter, struct fil_dev *device, const char *uri)
 		if (err) {
 			fprintf(stderr, "xnvme_queue_set_cb(): %d\n", err);
 			xnvme_queue_term(device->queue);
+			device->queue = NULL;
 			xnvme_dev_close(dev);
 			return err;
 		}
@@ -149,6 +151,7 @@ gpu_err_destroy_queues:
 	}
 gpu_err_free_queues:
 	free(device->cuda_queues);
+	device->cuda_queues = NULL;
 gpu_err_close:
 	xnvme_dev_close(dev);
 	return err;
@@ -238,8 +241,10 @@ _find_data_dir(struct xal *xal, char *data_dir, struct xal_inode **out)
 static int
 _xal_setup(struct fil_iter *iter, struct fil_dev *device)
 {
+	struct fil_stats dev_stats = {0};
 	struct xal *xal;
 	uint32_t xal_blksize;
+	uint64_t buffer_size;
 	int err;
 
 	err = _xal_attach(iter->opts->xal_shm, &xal);
@@ -255,19 +260,30 @@ _xal_setup(struct fil_iter *iter, struct fil_dev *device)
 
 	// Walk the dataset to populate the summary stats (n_files, max/avg file
 	// size) and derive buffer_size from the true largest file.
-	err = xal_walk(xal, device->root_inode, find_buffer_size, iter->stats);
+	err = xal_walk(xal, device->root_inode, find_buffer_size, &dev_stats);
 	if (err) {
 		fprintf(stderr, "xal_walk(find_buffer_size): %d\n", err);
 		xal_close(xal);
 		return -err;
 	}
+	if (!dev_stats.n_files) {
+		fprintf(stderr, "No files in %s\n", iter->opts->data_dir);
+		xal_close(xal);
+		return ENOENT;
+	}
 
+	iter->stats->n_files += dev_stats.n_files;
+	iter->stats->avg_file_size += dev_stats.avg_file_size;
+	if (dev_stats.max_file_size > iter->stats->max_file_size) {
+		iter->stats->max_file_size = dev_stats.max_file_size;
+	}
+
+	// Align to the file system block size
 	xal_blksize = xal_get_sb_blocksize(xal);
-
-	iter->stats->avg_file_size = iter->stats->avg_file_size / iter->stats->n_files;
-
-	// Align to page size
-	iter->buffer_size = (1 + ((iter->stats->max_file_size - 1) / xal_blksize)) * (xal_blksize);
+	buffer_size = (1 + ((dev_stats.max_file_size - 1) / xal_blksize)) * xal_blksize;
+	if (buffer_size > iter->buffer_size) {
+		iter->buffer_size = buffer_size;
+	}
 
 	// The index keeps each directory's entries sorted by name, so the position
 	// of a class directory is a stable label.
@@ -608,7 +624,8 @@ fil_term(struct fil_iter *iter)
 				xnvme_buf_free(device->dev, device->buffers[j]);
 			}
 			cudaFree(device->cuda_queues_dev);
-			for (uint32_t q = 0; q < iter->opts->gpu_nqueues; q++) {
+			for (uint32_t q = 0; device->cuda_queues && q < iter->opts->gpu_nqueues;
+			     q++) {
 				xnvme_cuda_queue_destroy(device->dev, device->cuda_queues[q]);
 			}
 			free(device->cuda_queues);
@@ -765,13 +782,6 @@ fil_init(struct fil_iter **iter, char **dev_uris, uint32_t n_devs, struct fil_op
 		return EINVAL;
 	}
 
-	if (!opts->max_file_size &&
-	    (strcmp(opts->backend, "aisio-cpu") == 0 || strcmp(opts->backend, "aisio-gpu") == 0 ||
-	     strcmp(opts->backend, "aisio-p2p") == 0)) {
-		fprintf(stderr, "--max-file-size is required for aisio backends\n");
-		return EINVAL;
-	}
-
 	_iter = malloc(sizeof(struct fil_iter));
 	if (!_iter) {
 		err = errno;
@@ -802,6 +812,7 @@ fil_init(struct fil_iter **iter, char **dev_uris, uint32_t n_devs, struct fil_op
 		return err;
 	}
 
+	// The largest file sizes the buffers, and with them the heap the device is opened with
 	for (uint32_t i = 0; i < n_devs; i++) {
 		struct fil_dev *device = malloc(sizeof(struct fil_dev));
 		if (!device) {
@@ -813,23 +824,25 @@ fil_init(struct fil_iter **iter, char **dev_uris, uint32_t n_devs, struct fil_op
 		}
 		memset(device, 0, sizeof(struct fil_dev));
 
-		err = _xnvme_setup(_iter, device, dev_uris[i]);
-		if (err) {
-			fprintf(stderr, "xNVMe setup failed for %s: %d\n", dev_uris[i], err);
-			free(device);
-			fil_term(_iter);
-			return err;
-		}
 		err = _xal_setup(_iter, device);
 		if (err) {
 			fprintf(stderr, "XAL setup failed for %s: %d\n", dev_uris[i], err);
-			xnvme_dev_close(device->dev);
 			free(device);
 			fil_term(_iter);
 			return err;
 		}
 		_iter->devs[i] = device;
 		_iter->n_devs++;
+	}
+	_iter->stats->avg_file_size /= _iter->stats->n_files;
+
+	for (uint32_t i = 0; i < n_devs; i++) {
+		err = _xnvme_setup(_iter, _iter->devs[i], dev_uris[i]);
+		if (err) {
+			fprintf(stderr, "xNVMe setup failed for %s: %d\n", dev_uris[i], err);
+			fil_term(_iter);
+			return err;
+		}
 	}
 
 	err = _alloc(_iter, _iter->opts->batch_size);
@@ -904,7 +917,6 @@ fil_opts_default()
 				.iosize = 4096,
 				.gpu_nqueues = 128,
 				.queue_depth = 1024,
-				.max_file_size = 0,
 				.batch_size = 1,
 				.buffered = false,
 				.async = false,

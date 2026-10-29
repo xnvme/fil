@@ -30,8 +30,6 @@ print_help(const char *name)
 			"relevant for backends: 'aisio-cpu' and 'aisio-gpu'\n");
 	fprintf(stderr, "\t --gpu-nqueues \t | \t The number of GPU queues to create (default = "
 			"128). Only relevant for backend: 'aisio-gpu'\n");
-	fprintf(stderr, "\t --max-file-size | \t Max file size in bytes. Required for aisio-cpu/"
-			"aisio-gpu/aisio-p2p to size the upcie heap correctly.\n");
 	fprintf(stderr, "\t --queue-depth \t | \t The NVMe queue depth (default = 1024). Only "
 			"relevant for backends: 'aisio-cpu' and 'aisio-gpu'\n");
 	fprintf(stderr,
@@ -74,12 +72,6 @@ parse_args(int argc, char *argv[], struct fil_cli_args *args, struct fil_opts *o
 			opts->gpu_nqueues = strtol(argv[++i], (char **)NULL, 10);
 			if (opts->gpu_nqueues <= 0) {
 				fprintf(stderr, "Invalid number of GPU queues: %s\n", argv[i]);
-				return -EINVAL;
-			}
-		} else if (strcmp(argv[i], "--max-file-size") == 0) {
-			opts->max_file_size = strtoull(argv[++i], (char **)NULL, 10);
-			if (opts->max_file_size == 0) {
-				fprintf(stderr, "Invalid max file size: %s\n", argv[i]);
 				return -EINVAL;
 			}
 		} else if (strcmp(argv[i], "--queue-depth") == 0) {

@@ -299,9 +299,8 @@ fil_gpu_submit(struct fil_iter *iter)
 
 				if (offset >= max_ios_per_buf) {
 					fprintf(stderr,
-						"File %s exceeds --max-file-size; "
-						"increase it to fit the largest file\n",
-						file->name);
+						"File %s does not fit its buffer of %lu bytes\n",
+						file->name, iter->buffer_size);
 					return EINVAL;
 				}
 

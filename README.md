@@ -57,7 +57,6 @@ filperf <device-uri> --data-dir <path> [options]
 | `--iosize <n>` | `4096` | Number of bytes per I/O (`aisio-cpu` and `aisio-gpu` only) |
 | `--queue-depth <n>` | `1024` | NVMe queue depth (`aisio-cpu` and `aisio-gpu` only) |
 | `--gpu-nqueues <n>` | `128` | Number of GPU queues (`aisio-gpu` only) |
-| `--max-file-size <n>` | _(required)_ | Max file size in bytes; required for the `aisio-cpu`/`aisio-gpu`/`aisio-p2p` backends to size the upcie heap |
 | `--warmup <n>` | `0` | Un-timed batches to run before starting the measurement window |
 | `--buffered` | off | Disable `O_DIRECT` when using `posix` backend |
 | `--copy-to-gpu` | off | Copy each file from host to device memory after reading (`aisio-cpu` and `posix` only) |
