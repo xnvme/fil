@@ -71,10 +71,9 @@ _xnvme_setup(struct fil_iter *iter, struct fil_dev *device, const char *uri)
 		opts.be = "upcie";
 		iter->type = FIL_GPU;
 	} else if (strcmp(backend, "posix") == 0) {
-		opts.be = "linux";
 		iter->type = FIL_FILE;
+		return 0;
 	} else if (strcmp(backend, "cufile") == 0) {
-		opts.be = "linux";
 		iter->type = FIL_FILE;
 #ifdef FIL_CUDA_ENABLED
 		status = cuFileDriverOpen();
@@ -83,6 +82,7 @@ _xnvme_setup(struct fil_iter *iter, struct fil_dev *device, const char *uri)
 			return status.err;
 		}
 #endif
+		return 0;
 	} else {
 		fprintf(stderr, "Invalid backend: %s\n", backend);
 		return EINVAL;
