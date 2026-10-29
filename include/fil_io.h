@@ -20,7 +20,6 @@ struct fil_data {
 };
 
 struct fil_file_io {
-	char prefix[PATH_MAX];
 	char path[PATH_MAX];
 	void *buffer;
 };

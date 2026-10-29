@@ -17,25 +17,15 @@
 #include <libxal.h>
 #include <libxnvme.h>
 
-// Arbitrary value out of range of normal err
-#define DATA_DIR_FOUND 9000
+// Waiting for xal-server to publish its index
+#define XAL_ATTACH_TIMEOUT_MS 30000
+#define XAL_ATTACH_INTERVAL_MS 100
 
 // Overhead for upcie heap beyond buffer data: covers NVMe queue allocations and internal metadata
 #define UPCIE_HEAP_OVERHEAD (128 << 20)
 #define UPCIE_HEAP_ALIGN (2 << 20)
 #define UPCIE_HEAP_SIZE(buf_total) \
 	(((buf_total) + UPCIE_HEAP_OVERHEAD + UPCIE_HEAP_ALIGN - 1) & ~(UPCIE_HEAP_ALIGN - 1))
-
-static int
-inode_cmp(const void *a, const void *b)
-{
-	const struct xal_inode *inode_a = (const struct xal_inode *)a;
-	const char *name_a = inode_a->name;
-	const struct xal_inode *inode_b = (const struct xal_inode *)b;
-	const char *name_b = inode_b->name;
-
-	return strcmp(name_a, name_b);
-}
 
 // Opens a second handle on the device with the CUDA-backed upcie backend,
 // sizing its device heap to hold the batch. Used by the aisio-gpu and
@@ -226,90 +216,84 @@ find_buffer_size(struct xal *FIL_UNUSED(xal), struct xal_inode *inode, void *cb_
 	return 0;
 }
 
+// Waits while xal-server is still publishing the index
 static int
-find_data_dir(struct xal *FIL_UNUSED(xal), struct xal_inode *inode, void *cb_args,
-	      int FIL_UNUSED(level))
+_xal_attach(const char *shm_name, struct xal **xal)
 {
-	struct fil_dev *dev = (struct fil_dev *)cb_args;
+	struct timespec interval = {.tv_nsec = XAL_ATTACH_INTERVAL_MS * 1000000L};
+	int err;
 
-	if (strcmp(dev->data_dir, inode->name) == 0) {
-		dev->root_inode = inode;
-		return DATA_DIR_FOUND; // break
+	for (uint32_t waited = 0;; waited += XAL_ATTACH_INTERVAL_MS) {
+		err = xal_from_shm(shm_name, xal);
+		if ((err != -EAGAIN && err != -ESTALE) || waited >= XAL_ATTACH_TIMEOUT_MS) {
+			break;
+		}
+		nanosleep(&interval, NULL);
 	}
 
-	return 0; // continue
+	switch (err) {
+	case 0:
+		return 0;
+	case -ENOENT:
+		fprintf(stderr, "No xal index published under %s; is xal-server running?\n",
+			shm_name);
+		break;
+	case -EPROTO:
+		fprintf(stderr, "The xal index under %s was published by an incompatible xal\n",
+			shm_name);
+		break;
+	default:
+		fprintf(stderr, "xal_from_shm(%s): %d\n", shm_name, err);
+	}
+	return -err;
 }
 
-static void
-path_prepend(struct xal *xal, char *path, struct xal_inode *node)
+// xal_get_inode() cannot resolve the root of the index, so that is matched by path
+static int
+_find_data_dir(struct xal *xal, char *data_dir, struct xal_inode **out)
 {
-	if (node->name[0] == '\0') {
-		return;
-	}
-	path_prepend(xal, path, xal_inode_at(xal, node->parent_idx));
-	strcat(path, "/");
-	strcat(path, node->name);
-}
+	char root_path[XAL_INODE_PATH_MAXLEN + 1];
+	struct xal_inode *root = xal_get_root(xal);
+	int err;
 
-static void
-_find_prefix(struct fil_iter *iter)
-{
-	char *prefix;
-	struct fil_dev *device;
-	for (uint32_t i = 0; i < iter->n_devs; i++) {
-		device = iter->devs[i];
-		prefix = device->file_io->prefix;
-		strcpy(prefix, iter->opts->mnt);
-		path_prepend(device->xal, prefix, device->root_inode);
+	err = xal_inode_path(xal, root, root_path, sizeof(root_path));
+	if (err < 0) {
+		fprintf(stderr, "xal_inode_path(root): %d\n", err);
+		return -err;
 	}
+
+	if (strcmp(data_dir, root_path) == 0) {
+		*out = root;
+	} else {
+		err = xal_get_inode(xal, data_dir, out);
+		if (err) {
+			fprintf(stderr, "Couldn't find %s in the index of %s: %d\n", data_dir,
+				root_path, err);
+			return -err;
+		}
+	}
+
+	if (!xal_inode_is_dir(*out)) {
+		fprintf(stderr, "Not a directory: %s\n", data_dir);
+		return ENOTDIR;
+	}
+	return 0;
 }
 
 static int
 _xal_setup(struct fil_iter *iter, struct fil_dev *device)
 {
 	struct xal *xal;
-	struct xal_opts xal_opts = {0};
-	struct xal_inode *root;
 	uint32_t xal_blksize;
 	int err;
 
-	xal_opts.be = XAL_BACKEND_XFS;
-
-	err = xal_open(device->dev, &xal, &xal_opts);
+	err = _xal_attach(iter->opts->xal_shm, &xal);
 	if (err) {
-		fprintf(stderr, "xal_open(): %d\n", err);
 		return err;
 	}
 
-	err = xal_dinodes_retrieve(xal);
+	err = _find_data_dir(xal, iter->opts->data_dir, &device->root_inode);
 	if (err) {
-		fprintf(stderr, "xal_dinodes_retrieve(): %d\n", err);
-		xal_close(xal);
-		return err;
-	}
-
-	err = xal_index(xal);
-	if (err) {
-		fprintf(stderr, "xal_index(): %d\n", err);
-		xal_close(xal);
-		return err;
-	}
-
-	device->data_dir = iter->opts->data_dir;
-
-	root = xal_get_root(xal);
-	err = xal_walk(xal, root, find_data_dir, device);
-	switch (err) {
-	case DATA_DIR_FOUND:
-		break;
-
-	case 0: // Root dir not found
-		fprintf(stderr, "Couldn't find root directory: %s\n", device->data_dir);
-		xal_close(xal);
-		return ENOENT;
-
-	default:
-		fprintf(stderr, "xal_walk(find_data_dir): %d\n", err);
 		xal_close(xal);
 		return err;
 	}
@@ -319,7 +303,8 @@ _xal_setup(struct fil_iter *iter, struct fil_dev *device)
 	err = xal_walk(xal, device->root_inode, find_buffer_size, iter->stats);
 	if (err) {
 		fprintf(stderr, "xal_walk(find_buffer_size): %d\n", err);
-		return err;
+		xal_close(xal);
+		return -err;
 	}
 
 	xal_blksize = xal_get_sb_blocksize(xal);
@@ -329,12 +314,8 @@ _xal_setup(struct fil_iter *iter, struct fil_dev *device)
 	// Align to page size
 	iter->buffer_size = (1 + ((iter->stats->max_file_size - 1) / xal_blksize)) * (xal_blksize);
 
-	// Sort the directories so we can derive labels
-	if (device->root_inode->content.dentries.count > 1) {
-		qsort(xal_inode_at(xal, device->root_inode->content.dentries.inodes_idx),
-		      device->root_inode->content.dentries.count, sizeof(struct xal_inode),
-		      inode_cmp);
-	}
+	// The index keeps each directory's entries sorted by name, so the position
+	// of a class directory is a stable label.
 	device->xal = xal;
 	return 0;
 }
@@ -784,6 +765,16 @@ fil_init(struct fil_iter **iter, char **dev_uris, uint32_t n_devs, struct fil_op
 		return EINVAL;
 	}
 
+	if (opts->data_dir[0] != '/') {
+		fprintf(stderr, "data_dir must be an absolute path\n");
+		return EINVAL;
+	}
+
+	if (opts->xal_shm[0] == '\0') {
+		fprintf(stderr, "xal_shm is required\n");
+		return EINVAL;
+	}
+
 	if (opts->batch_size % n_devs != 0) {
 		fprintf(stderr, "Batch size (%u) not divisible by number of devices (%u)\n",
 			opts->batch_size, n_devs);
@@ -877,64 +868,53 @@ fil_init(struct fil_iter **iter, char **dev_uris, uint32_t n_devs, struct fil_op
 			fil_term(_iter);
 			return err;
 		}
-		if (_iter->opts->data_dir[0] != '\0') {
-			err = _xal_setup(_iter, device);
-			if (err) {
-				fprintf(stderr, "XAL setup failed for %s: %d\n", dev_uris[i], err);
-				xnvme_dev_close(device->dev);
-				free(device);
-				fil_term(_iter);
-				return err;
-			}
+		err = _xal_setup(_iter, device);
+		if (err) {
+			fprintf(stderr, "XAL setup failed for %s: %d\n", dev_uris[i], err);
+			xnvme_dev_close(device->dev);
+			free(device);
+			fil_term(_iter);
+			return err;
 		}
 		_iter->devs[i] = device;
 		_iter->n_devs++;
 	}
 
-	if (_iter->opts->data_dir[0] != '\0') {
-		err = _alloc(_iter, _iter->opts->batch_size);
-		if (err) {
-			fil_term(_iter);
-			return err;
-		}
-		switch (_iter->type) {
-		case FIL_GPU:
-			_iter->io_fn = fil_gpu_submit;
-			err = FIL_TIME_ALLOC(_iter);
-			if (err) {
-				fil_term(_iter);
-				return err;
-			}
-			break;
-		case FIL_P2P:
-		case FIL_CPU:
-			_iter->io_fn = fil_cpu_submit;
-			break;
-		case FIL_FILE:
-			if (_iter->opts->async) {
-				_iter->io_fn = fil_cufile_async_submit;
-			} else {
-				_iter->io_fn = fil_file_submit;
-			}
-			_find_prefix(_iter);
-			break;
-		}
-
-		// Create an entry for every file in every directory
-		err = _create_entries(_iter);
-		if (err) {
-			fil_term(_iter);
-			return err;
-		}
-
-		FIL_SHUFFLE(_iter->data->entries, struct fil_entry, _iter->data->n_entries,
-			    uint64_t);
-
-	} else {
-		fprintf(stderr, "data_dir is required\n");
+	err = _alloc(_iter, _iter->opts->batch_size);
+	if (err) {
 		fil_term(_iter);
-		return EINVAL;
+		return err;
 	}
+	switch (_iter->type) {
+	case FIL_GPU:
+		_iter->io_fn = fil_gpu_submit;
+		err = FIL_TIME_ALLOC(_iter);
+		if (err) {
+			fil_term(_iter);
+			return err;
+		}
+		break;
+	case FIL_P2P:
+	case FIL_CPU:
+		_iter->io_fn = fil_cpu_submit;
+		break;
+	case FIL_FILE:
+		if (_iter->opts->async) {
+			_iter->io_fn = fil_cufile_async_submit;
+		} else {
+			_iter->io_fn = fil_file_submit;
+		}
+		break;
+	}
+
+	// Create an entry for every file in every directory
+	err = _create_entries(_iter);
+	if (err) {
+		fil_term(_iter);
+		return err;
+	}
+
+	FIL_SHUFFLE(_iter->data->entries, struct fil_entry, _iter->data->n_entries, uint64_t);
 
 	(*iter) = _iter;
 
@@ -967,7 +947,7 @@ struct fil_opts
 fil_opts_default()
 {
 	struct fil_opts opts = {.data_dir = "",
-				.mnt = "/mnt",
+				.xal_shm = "",
 				.backend = "aisio-cpu",
 				.iosize = 4096,
 				.gpu_nqueues = 128,

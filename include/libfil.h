@@ -1,7 +1,7 @@
 /**
  * Public API for FIL: File Iterator Library
- * This library allows you to iterate batch-wise over files,
- * without mounting the file system.
+ * This library allows you to iterate batch-wise over files on a mounted
+ * file system, using the index of the file system that xal-server publishes.
  *
  * The library works with the following directory structure:
  * <data_dir>/a/file0
@@ -26,15 +26,12 @@ struct fil_iter;
 
 /**
  * Options for initializing the FIL iterator
- *
- * Note: The root directory should be a name of a directory, not a path.
- * Additionally, the name of the root directory should be unique
  */
 struct fil_opts {
-	char *data_dir;       ///< A directory containing subdirectories with files
-	char *mnt;            ///< The mountpoint of the drive
-	char *backend;        ///< The backend to use
-	uint64_t iosize;      ///< The number of bytes per I/O
+	char *data_dir;  ///< Absolute path to a directory containing subdirectories with files
+	char *xal_shm;   ///< Name xal-server publishes the file system index under
+	char *backend;   ///< The backend to use
+	uint64_t iosize; ///< The number of bytes per I/O
 	uint32_t gpu_nqueues; ///< The number of GPU queues to create
 	uint32_t queue_depth; ///< The NVMe queue depth
 	size_t max_file_size; ///< Max file size in bytes. Required for the aisio-cpu/aisio-gpu/
@@ -77,8 +74,8 @@ struct fil_output {
 /**
  * Get default options
  *
- * data_dir = NULL
- * mnt = "/mnt"
+ * data_dir = ""
+ * xal_shm = ""
  * backend = "aisio-cpu"
  * iosize = 4096
  * gpu_nqueues = 128

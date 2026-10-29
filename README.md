@@ -23,7 +23,7 @@ A debug build can be configured with `make config-debug` followed by `make build
 
 ## Directory structure
 
-FIL expects data organized in two levels of subdirectories under a named root directory:
+FIL expects data organized in two levels of subdirectories under a data directory:
 
 ```
 <data_dir>/class_a/file0
@@ -33,8 +33,8 @@ FIL expects data organized in two levels of subdirectories under a named root di
 ...
 ```
 
-The subdirectory names are used as class labels. The `data_dir` is identified by
-name (not path) and must be unique across the device.
+The subdirectory names are used as class labels. The `data_dir` is an absolute path on
+the mounted file system.
 
 ## CLI
 
@@ -42,16 +42,16 @@ The `filperf` CLI runs benchmarks and reports throughput metrics. Progress is pr
 as CSV every second: elapsed time, batches completed, IOPS, and MiB/s.
 
 ```
-filperf <device-uri> [options]
+filperf <device-uri> --data-dir <path> [options]
 ```
 
 ### Options
 
 | Option | Default | Description |
 |---|---|---|
-| `--data-dir <name>` | _(none)_ | Root directory name containing class subdirectories |
+| `--data-dir <path>` | _(required)_ | Absolute path to the directory containing class subdirectories |
+| `--xal-shm <name>` | _(required)_ | Name of the `xal-server` index |
 | `--backend <name>` | `aisio-cpu` | I/O backend: `aisio-cpu`, `aisio-gpu`, `aisio-p2p`, `posix`, `cufile` |
-| `--mnt <path>` | `/mnt` | Mountpoint of the drive (for `posix` and `cufile` backends) |
 | `--batch-size <n>` | `1` | Number of files per batch |
 | `--batches <n>` | `1` | Number of batches to read |
 | `--iosize <n>` | `4096` | Number of bytes per I/O (`aisio-cpu` and `aisio-gpu` only) |

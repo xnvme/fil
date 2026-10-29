@@ -21,7 +21,6 @@ struct fil_dev {
 	struct xal_inode *root_inode;
 	struct fil_file_io *file_io;
 	uint32_t io_errors; ///< Reads that failed in the current batch (CPU/P2P path)
-	const char *data_dir;
 	void **buffers;
 	void **gpu_buffers; ///< Per-buffer GPU destinations for the aisio-cpu copy_to_gpu path
 	uint64_t buf;

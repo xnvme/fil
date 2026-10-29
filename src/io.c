@@ -87,13 +87,10 @@ _submit_run(struct xnvme_queue *queue, uint32_t nsid, uint64_t slba, uint64_t nb
 /**
  * Pull the next file from the shuffled dataset, resolve its directory and inode,
  * and record its length, label and byte count into the output and stats. Returns
- * the file inode and, if dir is non-NULL, writes the parent directory inode to
- * *dir. The returned pointers reference the device's xal pool, which is stable
- * for the lifetime of the iterator.
+ * the file inode, which references the device's xal pool.
  */
 static struct xal_inode *
-fil_next_file(struct fil_iter *iter, struct fil_dev *device, uint32_t dev_id, uint32_t buf_id,
-	      struct xal_inode **dir)
+fil_next_file(struct fil_iter *iter, struct fil_dev *device, uint32_t dev_id, uint32_t buf_id)
 {
 	struct fil_entry entry = iter->data->entries[iter->data->index++ % iter->data->n_entries];
 	uint32_t slot = buf_id + dev_id * device->n_buffers;
@@ -101,9 +98,6 @@ fil_next_file(struct fil_iter *iter, struct fil_dev *device, uint32_t dev_id, ui
 
 	dir_inode = xal_inode_at(device->xal,
 				 device->root_inode->content.dentries.inodes_idx + entry.dir);
-	if (dir) {
-		*dir = dir_inode;
-	}
 	file = xal_inode_at(device->xal, dir_inode->content.dentries.inodes_idx + entry.file);
 
 	iter->output->buf_len[slot] = file->size;
@@ -164,7 +158,7 @@ _submit_device(struct fil_iter *iter, struct fil_dev *device, uint32_t dev_id)
 	io_nblocks = iter->opts->iosize / blocksize;
 
 	for (uint32_t j = 0; j < device->n_buffers; j++) {
-		struct xal_inode *file = fil_next_file(iter, device, dev_id, j, NULL);
+		struct xal_inode *file = fil_next_file(iter, device, dev_id, j);
 		void *dbuf = device->buffers[j];
 		uint64_t slba = 0, run = 0;
 
@@ -291,7 +285,7 @@ fil_gpu_submit(struct fil_iter *iter)
 		buf_id = device->buf++ % device->n_buffers;
 		offset = 0;
 
-		file = fil_next_file(iter, device, dev_id, buf_id, NULL);
+		file = fil_next_file(iter, device, dev_id, buf_id);
 		FIL_TIME_TICK(iter, prep_meta_time);
 
 		for (uint32_t j = 0; j < file->content.extents.count; j++) {
@@ -379,7 +373,7 @@ fil_gpu_submit(struct fil_iter *FIL_UNUSED(iter))
 int
 fil_file_submit(struct fil_iter *iter)
 {
-	struct xal_inode *dir, *file;
+	struct xal_inode *file;
 	struct timespec start, end;
 #ifdef FIL_CUDA_ENABLED
 	CUfileError_t status;
@@ -389,7 +383,7 @@ fil_file_submit(struct fil_iter *iter)
 	uint32_t buf_id, dev_id, xal_blksize;
 	uint64_t nbytes;
 	void *buffer, *dst;
-	char *prefix, *path;
+	char *path;
 	int fd, flags;
 	ssize_t err, bytes_read;
 	bool is_cufile = strcmp(iter->opts->backend, "cufile") == 0;
@@ -404,19 +398,18 @@ fil_file_submit(struct fil_iter *iter)
 		struct fil_dev *device = iter->devs[dev_id];
 		buf_id = device->buf++ % device->n_buffers;
 		buffer = device->buffers[buf_id];
-		prefix = device->file_io->prefix;
 		path = device->file_io->path;
 		dst = iter->opts->copy_to_gpu ? device->file_io->buffer : buffer;
 		xal_blksize = xal_get_sb_blocksize(device->xal);
 
-		file = fil_next_file(iter, device, dev_id, buf_id, &dir);
+		file = fil_next_file(iter, device, dev_id, buf_id);
 		iter->stats->io++;
 
-		memcpy(path, prefix, strlen(prefix) + 1);
-		strcat(path, "/");
-		strcat(path, dir->name);
-		strcat(path, "/");
-		strcat(path, file->name);
+		err = xal_inode_path(device->xal, file, path, sizeof(device->file_io->path));
+		if (err < 0) {
+			fprintf(stderr, "xal_inode_path(%s): %ld\n", file->name, err);
+			return -err;
+		}
 
 		nbytes = file->size;
 		if (!is_cufile && !iter->opts->buffered) {
@@ -511,13 +504,13 @@ fil_file_submit(struct fil_iter *iter)
 int
 fil_cufile_async_submit(struct fil_iter *iter)
 {
-	struct xal_inode *dir, *file;
+	struct xal_inode *file;
 	struct timespec start, end;
 	struct fil_cufile_io *cufile_io;
 	CUfileError_t status;
 	uint32_t buf_id, dev_id;
 	void *buffer;
-	char *prefix, *path;
+	char *path;
 	int fd, flags, err = 0;
 	off_t offset = 0;
 
@@ -528,17 +521,16 @@ fil_cufile_async_submit(struct fil_iter *iter)
 		struct fil_dev *device = iter->devs[dev_id];
 		buf_id = device->buf++ % device->n_buffers;
 		buffer = device->buffers[buf_id];
-		prefix = device->file_io->prefix;
 		path = device->file_io->path;
 
-		file = fil_next_file(iter, device, dev_id, buf_id, &dir);
+		file = fil_next_file(iter, device, dev_id, buf_id);
 		iter->stats->io++;
 
-		memcpy(path, prefix, strlen(prefix) + 1);
-		strcat(path, "/");
-		strcat(path, dir->name);
-		strcat(path, "/");
-		strcat(path, file->name);
+		err = xal_inode_path(device->xal, file, path, sizeof(device->file_io->path));
+		if (err < 0) {
+			fprintf(stderr, "xal_inode_path(%s): %d\n", file->name, err);
+			return -err;
+		}
 
 		flags = O_RDONLY | O_DIRECT;
 

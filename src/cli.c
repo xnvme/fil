@@ -20,15 +20,12 @@ print_help(const char *name)
 {
 	fprintf(stderr, "Usage: %s <device uri> [<args>] \n", name);
 	fprintf(stderr, "Where <args> include \n");
-	fprintf(stderr,
-		"\t --data-dir \t | \t A directory containing subdirectories with files\n");
-	fprintf(stderr,
-		"\t \t \t | \t The data-dir should be a name of a directory, not a path\n");
-	fprintf(stderr, "\t \t \t | \t The name of the data-dir should be unique\n");
+	fprintf(stderr, "\t --data-dir \t | \t Absolute path to a directory containing "
+			"subdirectories with files\n");
+	fprintf(stderr, "\t --xal-shm \t | \t The name of the xal-server index of the file "
+			"system holding data-dir\n");
 	fprintf(stderr, "\t --backend \t | \t The backend to use for reading files (aisio-cpu "
 			"[default], aisio-gpu, aisio-p2p, posix, cufile)\n");
-	fprintf(stderr, "\t --mnt \t \t | \t The mountpoint of the drive (default = /mnt). Only "
-			"relevant for backends: 'posix' and 'cufile'\n");
 	fprintf(stderr, "\t --iosize \t | \t The number of bytes per I/O (default = 4096). Only "
 			"relevant for backends: 'aisio-cpu' and 'aisio-gpu'\n");
 	fprintf(stderr, "\t --gpu-nqueues \t | \t The number of GPU queues to create (default = "
@@ -63,8 +60,8 @@ parse_args(int argc, char *argv[], struct fil_cli_args *args, struct fil_opts *o
 	for (int i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "--data-dir") == 0) {
 			opts->data_dir = argv[++i];
-		} else if (strcmp(argv[i], "--mnt") == 0) {
-			opts->mnt = argv[++i];
+		} else if (strcmp(argv[i], "--xal-shm") == 0) {
+			opts->xal_shm = argv[++i];
 		} else if (strcmp(argv[i], "--backend") == 0) {
 			opts->backend = argv[++i];
 		} else if (strcmp(argv[i], "--iosize") == 0) {
@@ -250,22 +247,16 @@ main(int argc, char *argv[])
 		printf("\t  IO memcpy: %lf\n", stats->io_memcpy_time);
 		printf("\t  IO sync: %lf\n", stats->io_sync_time);
 		printf("\t    IO kernel: %lf\n", stats->io_kernel_time);
-		if (opts.data_dir[0] == '\0') {
-			printf("\t -- SYNTHETIC NUMBERS EXCLUDING PREP TIME -- \n");
-			time = stats->io_time;
-		}
 		printf("\tFile/s: %lf\n", (args.batches * opts.batch_size) / elapsed);
 		printf("\tMiB/s: %lf\n", (stats->bytes / 1024.f / 1024.f) / elapsed);
 		printf("\tIOPS: %lf\n", stats->io / elapsed);
 		printf("\tNumber of IOs: %lu\n", stats->io);
-		if (opts.data_dir[0] != '\0') {
-			printf("Dataset stats:\n");
-			printf("\tNumber of files in the dataset: %lu\n", stats->n_files);
-			printf("\tMaximum size of files in the dataset (KiB): %lu\n",
-			       stats->max_file_size / 1024);
-			printf("\tAverage size of files in the dataset (KiB): %lf\n",
-			       stats->avg_file_size / 1024);
-		}
+		printf("Dataset stats:\n");
+		printf("\tNumber of files in the dataset: %lu\n", stats->n_files);
+		printf("\tMaximum size of files in the dataset (KiB): %lu\n",
+		       stats->max_file_size / 1024);
+		printf("\tAverage size of files in the dataset (KiB): %lf\n",
+		       stats->avg_file_size / 1024);
 	}
 	fil_term(iter);
 
