@@ -11,6 +11,7 @@
 
 #include <libfil.h>
 #include <fil_io.h>
+#include <fil_opends.h>
 #include <fil_iter.h>
 #include <fil_time.h>
 #include <fil_util.h>
@@ -439,23 +440,39 @@ fil_open_file(struct fil_iter *iter, struct fil_dev *device, uint32_t dev_id, ui
 	return 0;
 }
 
+/** Open the next file for read 'i' of the batch, and hand out the buffer it goes in */
+int
+fil_open_next(struct fil_iter *iter, uint32_t i, int flags, void **buffer, int *fd, uint64_t *size)
+{
+	uint32_t dev_id = i % iter->n_devs;
+	struct fil_dev *device = iter->devs[dev_id];
+	uint32_t buf_id = device->buf++ % device->n_buffers;
+	struct fil_file *file = fil_next_file(iter, device, dev_id, buf_id);
+
+	*buffer = device->buffers[buf_id];
+	iter->stats->io++;
+
+	return fil_open_file(iter, device, dev_id, buf_id, file, flags, fd, size);
+}
+
 int
 fil_file_submit(struct fil_iter *iter)
 {
-	struct fil_file *file;
 	struct timespec start, end;
 #ifdef FIL_CUDA_ENABLED
 	CUfileError_t status;
 	CUfileDescr_t descr;
 	CUfileHandle_t fh;
+	void *dfh;
 #endif
-	uint32_t buf_id, dev_id, blksize;
+	uint32_t blksize;
 	uint64_t nbytes, size = 0;
 	void *buffer, *dst;
 	char *path;
 	int fd, flags;
 	ssize_t err, bytes_read;
 	bool is_cufile = iter->type == FIL_CUFILE;
+	bool is_opends = iter->type == FIL_OPENDS;
 	flags = O_RDONLY;
 	if (is_cufile || !iter->opts->buffered) {
 		flags |= O_DIRECT;
@@ -463,24 +480,18 @@ fil_file_submit(struct fil_iter *iter)
 
 	for (uint32_t i = 0; i < iter->opts->batch_size; i++) {
 		clock_gettime(CLOCK_MONOTONIC_RAW, &start);
-		dev_id = i % iter->n_devs;
-		struct fil_dev *device = iter->devs[dev_id];
-		buf_id = device->buf++ % device->n_buffers;
-		buffer = device->buffers[buf_id];
+		struct fil_dev *device = iter->devs[i % iter->n_devs];
+
+		err = fil_open_next(iter, i, flags, &buffer, &fd, &size);
+		if (err) {
+			return err;
+		}
 		path = device->file_io->path;
 		dst = iter->opts->copy_to_gpu ? device->file_io->buffer : buffer;
 		blksize = device->fs_blksize;
 
-		file = fil_next_file(iter, device, dev_id, buf_id);
-		iter->stats->io++;
-
-		err = fil_open_file(iter, device, dev_id, buf_id, file, flags, &fd, &size);
-		if (err) {
-			return err;
-		}
-
 		nbytes = size;
-		if (!is_cufile && !iter->opts->buffered) {
+		if (!is_cufile && !is_opends && !iter->opts->buffered) {
 			// POSIX O_DIRECT requires aligned nbytes
 			nbytes = (1 + ((size - 1) / blksize)) * blksize;
 		}
@@ -495,6 +506,12 @@ fil_file_submit(struct fil_iter *iter)
 				fprintf(stderr, "Could not register file, err: %d\n", status.err);
 				close(fd);
 				return status.err;
+			}
+		} else if (is_opends) {
+			err = fil_opends_file_register(fd, &dfh);
+			if (err) {
+				close(fd);
+				return err;
 			}
 		}
 #endif
@@ -521,6 +538,11 @@ fil_file_submit(struct fil_iter *iter)
 				return EIO;
 			}
 			cuFileHandleDeregister(fh);
+		} else if (is_opends) {
+			err = fil_opends_file_read(dfh, buffer, nbytes, path);
+			if (err) {
+				return err;
+			}
 		} else
 #endif
 		{
@@ -565,11 +587,9 @@ fil_file_submit(struct fil_iter *iter)
 int
 fil_cufile_stream_submit(struct fil_iter *iter)
 {
-	struct fil_file *file;
 	struct timespec start, end;
 	struct fil_cufile_io *cufile_io;
 	CUfileError_t status;
-	uint32_t buf_id, dev_id;
 	uint64_t size;
 	void *buffer;
 	int fd, err = 0;
@@ -578,16 +598,7 @@ fil_cufile_stream_submit(struct fil_iter *iter)
 	cufile_io = iter->cufile_io;
 	clock_gettime(CLOCK_MONOTONIC_RAW, &start);
 	for (uint32_t i = 0; i < iter->opts->batch_size; i++) {
-		dev_id = i % iter->n_devs;
-		struct fil_dev *device = iter->devs[dev_id];
-		buf_id = device->buf++ % device->n_buffers;
-		buffer = device->buffers[buf_id];
-
-		file = fil_next_file(iter, device, dev_id, buf_id);
-		iter->stats->io++;
-
-		err = fil_open_file(iter, device, dev_id, buf_id, file, O_RDONLY | O_DIRECT, &fd,
-				    &size);
+		err = fil_open_next(iter, i, O_RDONLY | O_DIRECT, &buffer, &fd, &size);
 		if (err) {
 			return err;
 		}

@@ -8,11 +8,15 @@ cases.
 ## Dependencies
 
 - [xNVMe](https://xnvme.io/) (`main` branch), with `homi` and `qublk` for the `aisio`
-  backends
-- [xal](https://github.com/xnvme/xal) 0.3.4, with `xal-server` for the `aisio` backends
-- CUDA with cuFile, optional: without it the `aisio-gpu` and `cufile` backends and
-  `--copy-to-gpu` are not built, and the others are. The `cuda` build option
+  and `opends` backends
+- [xal](https://github.com/xnvme/xal) 0.3.4, with `xal-server` for the `aisio` and
+  `opends` backends
+- CUDA with cuFile, optional: without it the `aisio-gpu`, `cufile` and `opends` backends
+  and `--copy-to-gpu` are not built, and the others are. The `cuda` build option
   (`auto`, `enabled`, `disabled`) chooses.
+- [OpenDS](https://github.com/xnvme/opends), optional and needing CUDA: without its
+  `opends_aisio` library the `opends` backends are not built, and the others are. The
+  `opends` build option (`auto`, `enabled`, `disabled`) chooses.
 
 ## Building
 
@@ -25,14 +29,15 @@ A debug build can be configured with `make config-debug` followed by `make build
 
 ## How it fits together
 
-The `aisio` backends read the files of a mounted file system straight from the NVMe
-device:
+The `aisio` and `opends` backends read the files of a mounted file system straight from
+the NVMe device:
 
 1. `homi` holds the controller and shares it between processes.
 2. `qublk` serves the namespace through `homi` as `/dev/ublkb<N>`, which is mounted.
 3. `xal-server` publishes an index of the file system, with the extents of every file.
-4. FIL looks up the extents in the index and reads them over queues of its own from
-   `homi`.
+4. The `aisio` backends look up the extents in the index and read them over queues of
+   their own from `homi`. The `opends` backends leave both to OpenDS, in the same
+   process, and FIL opens no device for them.
 
 The `posix` and `cufile` backends read through the file system and need none of this.
 
@@ -56,8 +61,9 @@ devices = [
 The `homi` host heap (`--host_heap_size`) must hold the buffers of `aisio-cpu`:
 `--batch-size` of them, each the size of the largest file.
 
-When `xal-server` re-indexes (with a `watchmode`), FIL waits and reads any batch the
-re-index raced again. A re-index walks the whole file system, so keep files that
+When `xal-server` re-indexes (with a `watchmode`), the `aisio` backends wait and read
+any batch the re-index raced again, and OpenDS waits for a stale index on its own. A
+re-index walks the whole file system, so keep files that
 change often elsewhere. Without a `watchmode`, the index is valid only while the file
 system does not change. Sync the file system after writing the dataset.
 
@@ -90,10 +96,10 @@ filperf [<device-uri>] --data-dir <path> [options]
 | Option | Default | Description |
 |---|---|---|
 | `--data-dir <path>` | _(required)_ | Absolute path to the directory containing class subdirectories |
-| `--xal-shm <name>` | _(none)_ | Name of the `xal-server` index; required for the `aisio` backends |
+| `--xal-shm <name>` | _(none)_ | Name of the `xal-server` index; required for the `aisio` and `opends` backends |
 | `--nsid <n>` | `1` | Namespace |
-| `--backend <name>` | `aisio-cpu` | I/O backend: `aisio-cpu`, `aisio-gpu`, `aisio-p2p`, `posix`, `cufile`, `cufile-stream` |
-| `--homi-id <n>` | _(none)_ | Id of the `homi` server holding the device; required for the `aisio` backends |
+| `--backend <name>` | `aisio-cpu` | I/O backend: `aisio-cpu`, `aisio-gpu`, `aisio-p2p`, `posix`, `cufile`, `cufile-stream`, `opends`, `opends-stream` |
+| `--homi-id <n>` | _(none)_ | Id of the `homi` server holding the device; required for the `aisio` and `opends` backends |
 | `--batch-size <n>` | `1` | Number of files per batch |
 | `--batches <n>` | `1` | Number of batches to read |
 | `--iosize <n>` | `4096` | Number of bytes per I/O (`aisio` backends only) |
@@ -105,7 +111,10 @@ filperf [<device-uri>] --data-dir <path> [options]
 | `--summary` | off | Print I/O and dataset statistics after completion |
 | `--help` | | Print usage |
 
-`posix` and `cufile` need no device uri.
+`posix`, `cufile` and `opends` need no device uri: `opends` reads the device held by the
+`homi` server named by `--homi-id`. `--iosize` and `--queue-depth` do not apply to
+`opends`, which is tuned through its own `OPENDS_AISIO_*` environment variables, listed
+in the OpenDS README. FIL sets `OPENDS_AISIO_HOMI_ID` and `OPENDS_XAL_SHM` itself.
 
 ### Examples
 
@@ -129,6 +138,18 @@ filperf --data-dir /mnt/datasets/imagenetish \
   --backend posix --batches 10 --batch-size 1024 --summary
 ```
 
+`opends` reads into GPU memory through the OpenDS aisio file API, with DMA from NVMe to
+the GPU and no kernel in the read path, so `data-dir` must be on the device `homi` holds.
+FIL opens each file through the mounted file system to hand OpenDS a handle, and OpenDS
+looks up its extents in the same index as the `aisio` backends. `opends-stream` is the
+same backend with every read ordered on a CUDA stream. As with `cufile`, IOPS equals
+File/s.
+
+```
+filperf --homi-id 1 --xal-shm /xal_dev0 --data-dir /mnt/datasets/imagenetish \
+  --backend opends --batches 10 --batch-size 1024 --summary
+```
+
 ## API
 
 Initialize the iterator with `fil_init()`, call `fil_next()` to retrieve successive
@@ -137,7 +158,8 @@ struct containing buffers, their lengths, and class labels derived from the
 subdirectory layout. I/O statistics accumulated across batches are available via
 `fil_get_stats()`.
 
-`aisio-gpu`, `aisio-p2p` and `cufile` return buffers in GPU memory. `aisio-cpu`
+`aisio-gpu`, `aisio-p2p`, and the `cufile` and `opends` backends return buffers in GPU
+memory. `aisio-cpu`
 and `posix` return host memory unless `copy_to_gpu` is set, and then need no GPU.
 
 See `include/libfil.h` for the full API reference.

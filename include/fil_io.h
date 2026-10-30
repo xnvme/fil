@@ -68,4 +68,8 @@ fil_file_submit(struct fil_iter *iter);
 int
 fil_cufile_stream_submit(struct fil_iter *iter);
 
+int
+fil_open_next(struct fil_iter *iter, uint32_t i, int flags, void **buffer, int *fd,
+	      uint64_t *size);
+
 #endif

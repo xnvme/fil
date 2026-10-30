@@ -6,7 +6,7 @@
 #include <fil_io.h>
 #include <stdint.h>
 
-enum fil_type { FIL_GPU, FIL_CPU, FIL_FILE, FIL_P2P, FIL_CUFILE };
+enum fil_type { FIL_GPU, FIL_CPU, FIL_FILE, FIL_P2P, FIL_CUFILE, FIL_OPENDS };
 
 enum fil_mode { FIL_SYNC, FIL_STREAM };
 
@@ -41,6 +41,7 @@ struct fil_iter {
 	struct fil_opts *opts;
 	struct fil_output *output;
 	struct fil_cufile_io *cufile_io;
+	struct fil_opends_io *opends_io;
 	int (*io_fn)(struct fil_iter *iter);
 	struct fil_time *time;
 	uint64_t buffer_size;
