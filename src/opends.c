@@ -27,6 +27,7 @@ struct fil_opends_io {
 	size_t *expected;
 	ssize_t *actual;
 	cudaStream_t *streams;
+	opends_async_future_t *futures;
 };
 
 /* OpenDS is configured through the environment, which it reads as the driver opens */
@@ -84,7 +85,7 @@ fil_opends_io_alloc(struct fil_iter *iter)
 	struct fil_opends_io *io;
 	int err;
 
-	if (iter->mode != FIL_STREAM) {
+	if (iter->mode == FIL_SYNC) {
 		return 0;
 	}
 
@@ -100,10 +101,15 @@ fil_opends_io_alloc(struct fil_iter *iter)
 	io->fds = malloc(sizeof(int) * n);
 	io->expected = malloc(sizeof(size_t) * n);
 	io->actual = malloc(sizeof(ssize_t) * n);
-	if (!io->handles || !io->fds || !io->expected || !io->actual) {
+	io->futures = malloc(sizeof(opends_async_future_t) * n);
+	if (!io->handles || !io->fds || !io->expected || !io->actual || !io->futures) {
 		err = errno;
 		fprintf(stderr, "Could not allocate OpenDS IO arrays: %d\n", err);
 		return err;
+	}
+
+	if (iter->mode == FIL_ASYNC) {
+		return 0;
 	}
 
 	io->streams = calloc(n, sizeof(cudaStream_t));
@@ -143,6 +149,7 @@ fil_opends_term(struct fil_iter *iter)
 		free(io->fds);
 		free(io->expected);
 		free(io->actual);
+		free(io->futures);
 		if (io->streams) {
 			for (uint32_t i = 0; i < iter->opts->batch_size; i++) {
 				if (!io->streams[i]) {
@@ -299,6 +306,54 @@ teardown:
 	return err;
 }
 
+int
+fil_opends_async_submit(struct fil_iter *iter)
+{
+	struct fil_opends_io *io = iter->opends_io;
+	struct timespec start, end;
+	opends_error_t derr;
+	uint32_t nreg = 0, nsub = 0;
+	void *buffer;
+	int err = 0;
+
+	clock_gettime(CLOCK_MONOTONIC_RAW, &start);
+	for (uint32_t i = 0; i < iter->opts->batch_size; i++) {
+		err = _prep_read(iter, i, &buffer);
+		if (err) {
+			break;
+		}
+		nreg = i + 1;
+
+		derr = opends_async_read(io->handles[i], buffer, io->expected[i], 0, 0,
+					 &io->futures[i]);
+		if (derr.err != OPENDS_SUCCESS) {
+			fprintf(stderr, "opends_async_read failed, err: %s\n",
+				opends_op_status_error(derr.err));
+			err = derr.err;
+			break;
+		}
+		nsub = i + 1;
+	}
+	clock_gettime(CLOCK_MONOTONIC_RAW, &end);
+	iter->stats->prep_time += ELAPSED(start, end);
+
+	clock_gettime(CLOCK_MONOTONIC_RAW, &start);
+	for (uint32_t i = 0; i < nsub; i++) {
+		int failed = _check_read(opends_async_await(&io->futures[i]), io->expected[i]);
+
+		if (failed) {
+			err = failed;
+		}
+	}
+	clock_gettime(CLOCK_MONOTONIC_RAW, &end);
+	iter->stats->io_time += ELAPSED(start, end);
+
+	/* Deregister only after the await loop: a handle with I/O in flight on it
+	 * must not be deregistered. */
+	_release_reads(io, nreg);
+	return err;
+}
+
 #else
 
 int
@@ -345,6 +400,12 @@ fil_opends_file_read(void *FIL_UNUSED(fh), void *FIL_UNUSED(buf), size_t FIL_UNU
 
 int
 fil_opends_stream_submit(struct fil_iter *FIL_UNUSED(iter))
+{
+	return ENOSYS;
+}
+
+int
+fil_opends_async_submit(struct fil_iter *FIL_UNUSED(iter))
 {
 	return ENOSYS;
 }

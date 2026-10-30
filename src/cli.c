@@ -27,7 +27,7 @@ print_help(const char *name)
 	fprintf(stderr, "\t --nsid \t | \t The namespace (default = 1)\n");
 	fprintf(stderr, "\t --backend \t | \t The backend to use for reading files (aisio-cpu "
 			"[default], aisio-gpu, aisio-p2p, posix, cufile, cufile-stream, opends, "
-			"opends-stream)\n");
+			"opends-stream, opends-async)\n");
 	fprintf(stderr, "\t --homi-id \t | \t The id of the homi server holding the device. "
 			"Required for the aisio and opends backends\n");
 	fprintf(stderr, "\t --iosize \t | \t The number of bytes per I/O (default = 4096). Only "

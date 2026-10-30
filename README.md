@@ -98,7 +98,7 @@ filperf [<device-uri>] --data-dir <path> [options]
 | `--data-dir <path>` | _(required)_ | Absolute path to the directory containing class subdirectories |
 | `--xal-shm <name>` | _(none)_ | Name of the `xal-server` index; required for the `aisio` and `opends` backends |
 | `--nsid <n>` | `1` | Namespace |
-| `--backend <name>` | `aisio-cpu` | I/O backend: `aisio-cpu`, `aisio-gpu`, `aisio-p2p`, `posix`, `cufile`, `cufile-stream`, `opends`, `opends-stream` |
+| `--backend <name>` | `aisio-cpu` | I/O backend: `aisio-cpu`, `aisio-gpu`, `aisio-p2p`, `posix`, `cufile`, `cufile-stream`, `opends`, `opends-stream`, `opends-async` |
 | `--homi-id <n>` | _(none)_ | Id of the `homi` server holding the device; required for the `aisio` and `opends` backends |
 | `--batch-size <n>` | `1` | Number of files per batch |
 | `--batches <n>` | `1` | Number of batches to read |
@@ -142,12 +142,13 @@ filperf --data-dir /mnt/datasets/imagenetish \
 the GPU and no kernel in the read path, so `data-dir` must be on the device `homi` holds.
 FIL opens each file through the mounted file system to hand OpenDS a handle, and OpenDS
 looks up its extents in the same index as the `aisio` backends. `opends-stream` is the
-same backend with every read ordered on a CUDA stream. As with `cufile`, IOPS equals
-File/s.
+same backend with every read ordered on a CUDA stream, and `opends-async` submits the
+whole batch through the OpenDS async API and awaits the reads in submission order. As
+with `cufile`, IOPS equals File/s.
 
 ```
 filperf --homi-id 1 --xal-shm /xal_dev0 --data-dir /mnt/datasets/imagenetish \
-  --backend opends --batches 10 --batch-size 1024 --summary
+  --backend opends-async --batches 10 --batch-size 1024 --summary
 ```
 
 ## API
