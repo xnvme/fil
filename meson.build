@@ -18,7 +18,7 @@ if not cc.has_function('clock_gettime', prefix: '#include <time.h>', dependencie
   error('clock_gettime not found')
 endif
 
-# CUDA gives the aisio-gpu and cufile backends and copy_to_gpu; without it the
+# CUDA gives the aisio-gpu, cufile and opends backends and copy_to_gpu; without it the
 # others build, and fil_init() rejects those
 cuda_opt = get_option('cuda')
 have_cuda = add_languages('cuda', required: cuda_opt, native: false)
@@ -50,6 +50,14 @@ xal_dep = dependency(
   required: true
 )
 
+opends_dep = dependency(
+  'opends_aisio',
+  required: get_option('opends')
+)
+if get_option('opends').enabled() and not have_cuda
+  error('opends needs CUDA')
+endif
+
 fil_deps = [
   rt_dep,
   xnvme_dep,
@@ -66,9 +74,15 @@ public_headers = files(
 sources = files(
   'src/iter.c',
   'src/io.c',
+  'src/opends.c',
 )
 if have_cuda
   sources += files('src/gpu_io.cu')
+endif
+
+if have_cuda and opends_dep.found()
+  add_project_arguments('-DFIL_OPENDS_ENABLED=1', language: 'c')
+  fil_deps += opends_dep
 endif
 
 include_dirs = include_directories('include')

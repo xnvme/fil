@@ -23,13 +23,13 @@ print_help(const char *name)
 	fprintf(stderr, "\t --data-dir \t | \t Absolute path to a directory containing "
 			"subdirectories with files\n");
 	fprintf(stderr, "\t --xal-shm \t | \t The name of the xal-server index of the file "
-			"system holding data-dir. Required for backends: 'aisio-cpu', 'aisio-gpu' "
-			"and 'aisio-p2p'\n");
+			"system holding data-dir. Required for the aisio and opends backends\n");
 	fprintf(stderr, "\t --nsid \t | \t The namespace (default = 1)\n");
 	fprintf(stderr, "\t --backend \t | \t The backend to use for reading files (aisio-cpu "
-			"[default], aisio-gpu, aisio-p2p, posix, cufile, cufile-stream)\n");
+			"[default], aisio-gpu, aisio-p2p, posix, cufile, cufile-stream, opends, "
+			"opends-stream)\n");
 	fprintf(stderr, "\t --homi-id \t | \t The id of the homi server holding the device. "
-			"Required for backends: 'aisio-cpu', 'aisio-gpu' and 'aisio-p2p'\n");
+			"Required for the aisio and opends backends\n");
 	fprintf(stderr, "\t --iosize \t | \t The number of bytes per I/O (default = 4096). Only "
 			"relevant for backends: 'aisio-cpu', 'aisio-gpu' and 'aisio-p2p'\n");
 	fprintf(stderr, "\t --gpu-nqueues \t | \t The number of GPU queues to create (default = "

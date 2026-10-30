@@ -29,9 +29,9 @@ struct fil_iter;
  */
 struct fil_opts {
 	char *data_dir;   ///< Absolute path to a directory containing subdirectories with files
-	char *xal_shm;    ///< Name of the xal-server index; aisio backends only
+	char *xal_shm;    ///< Name of the xal-server index; aisio and opends backends only
 	char *backend;    ///< The backend to use
-	uint32_t homi_id; ///< The homi server the aisio backends attach to
+	uint32_t homi_id; ///< The homi server the aisio and opends backends attach to
 	uint32_t nsid;    ///< The namespace
 	uint64_t iosize;  ///< The number of bytes per I/O
 	uint32_t gpu_nqueues; ///< The number of GPU queues to create
@@ -102,7 +102,8 @@ fil_get_stats(struct fil_iter *iter);
  * Initialize FIL iterator
  *
  * @param iter Pointer to where to initialize the FIL iterator
- * @param dev_uris Paths to devices (eg. /dev/nvme0n1 or 0000:01:00.0)
+ * @param dev_uris Paths to devices (eg. /dev/nvme0n1 or 0000:01:00.0); the entry is NULL for
+ * the backends that take no device: posix, cufile and opends
  * @param n_devs The number of devices; must be 1
  * @param opts Options (struct fil_opts) for the FIL iterator
  *
