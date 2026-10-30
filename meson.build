@@ -1,5 +1,5 @@
 project('fil', 'c',
-  version: '0.3.4',
+  version: '0.4.0',
   meson_version: '>=0.55.0',
   default_options: [
     'c_std=gnu11',
