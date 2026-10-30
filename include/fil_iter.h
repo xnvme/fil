@@ -8,7 +8,7 @@
 
 enum fil_type { FIL_GPU, FIL_CPU, FIL_FILE, FIL_P2P, FIL_CUFILE, FIL_OPENDS };
 
-enum fil_mode { FIL_SYNC, FIL_STREAM };
+enum fil_mode { FIL_SYNC, FIL_STREAM, FIL_ASYNC };
 
 struct fil_time;
 

@@ -31,4 +31,7 @@ fil_opends_file_read(void *fh, void *buf, size_t nbytes, const char *path);
 int
 fil_opends_stream_submit(struct fil_iter *iter);
 
+int
+fil_opends_async_submit(struct fil_iter *iter);
+
 #endif

@@ -87,6 +87,10 @@ _xnvme_setup(struct fil_iter *iter, struct fil_dev *device, const char *uri)
 		iter->type = FIL_OPENDS;
 		iter->mode = FIL_STREAM;
 		return 0;
+	} else if (strcmp(backend, "opends-async") == 0) {
+		iter->type = FIL_OPENDS;
+		iter->mode = FIL_ASYNC;
+		return 0;
 	} else {
 		fprintf(stderr, "Invalid backend: %s\n", backend);
 		return EINVAL;
@@ -1257,7 +1261,9 @@ fil_init(struct fil_iter **iter, char **dev_uris, uint32_t n_devs, struct fil_op
 		}
 		break;
 	case FIL_OPENDS:
-		if (_iter->mode == FIL_STREAM) {
+		if (_iter->mode == FIL_ASYNC) {
+			_iter->io_fn = fil_opends_async_submit;
+		} else if (_iter->mode == FIL_STREAM) {
 			_iter->io_fn = fil_opends_stream_submit;
 		} else {
 			_iter->io_fn = fil_file_submit;
