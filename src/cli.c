@@ -27,7 +27,7 @@ print_help(const char *name)
 			"and 'aisio-p2p'\n");
 	fprintf(stderr, "\t --nsid \t | \t The namespace (default = 1)\n");
 	fprintf(stderr, "\t --backend \t | \t The backend to use for reading files (aisio-cpu "
-			"[default], aisio-gpu, aisio-p2p, posix, cufile)\n");
+			"[default], aisio-gpu, aisio-p2p, posix, cufile, cufile-stream)\n");
 	fprintf(stderr, "\t --homi-id \t | \t The id of the homi server holding the device. "
 			"Required for backends: 'aisio-cpu', 'aisio-gpu' and 'aisio-p2p'\n");
 	fprintf(stderr, "\t --iosize \t | \t The number of bytes per I/O (default = 4096). Only "
@@ -42,7 +42,6 @@ print_help(const char *name)
 	fprintf(stderr, "\t --warmup \t | \t The number of un-timed warmup batches to read before "
 			"the timed run (default = 0)\n");
 	fprintf(stderr, "\t --buffered \t | \t Don't open with O_DIRECT when using POSIX\n");
-	fprintf(stderr, "\t --async \t | \t Use the async API when using cuFile\n");
 	fprintf(stderr, "\t --register_bufs | \t Register device buffers with cuFileBufRegister "
 			"(cuFile backend)\n");
 	fprintf(stderr, "\t --copy-to-gpu \t | \t Copy each file from host to device memory after "
@@ -117,8 +116,6 @@ parse_args(int argc, char *argv[], struct fil_cli_args *args, struct fil_opts *o
 			args->warmup = (uint32_t)w;
 		} else if (strcmp(argv[i], "--buffered") == 0) {
 			opts->buffered = true;
-		} else if (strcmp(argv[i], "--async") == 0) {
-			opts->async = true;
 		} else if (strcmp(argv[i], "--register_bufs") == 0) {
 			opts->register_bufs = true;
 		} else if (strcmp(argv[i], "--copy-to-gpu") == 0) {

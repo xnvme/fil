@@ -92,7 +92,7 @@ filperf [<device-uri>] --data-dir <path> [options]
 | `--data-dir <path>` | _(required)_ | Absolute path to the directory containing class subdirectories |
 | `--xal-shm <name>` | _(none)_ | Name of the `xal-server` index; required for the `aisio` backends |
 | `--nsid <n>` | `1` | Namespace |
-| `--backend <name>` | `aisio-cpu` | I/O backend: `aisio-cpu`, `aisio-gpu`, `aisio-p2p`, `posix`, `cufile` |
+| `--backend <name>` | `aisio-cpu` | I/O backend: `aisio-cpu`, `aisio-gpu`, `aisio-p2p`, `posix`, `cufile`, `cufile-stream` |
 | `--homi-id <n>` | _(none)_ | Id of the `homi` server holding the device; required for the `aisio` backends |
 | `--batch-size <n>` | `1` | Number of files per batch |
 | `--batches <n>` | `1` | Number of batches to read |
@@ -102,7 +102,6 @@ filperf [<device-uri>] --data-dir <path> [options]
 | `--warmup <n>` | `0` | Un-timed batches to run before starting the measurement window |
 | `--buffered` | off | Disable `O_DIRECT` when using `posix` backend |
 | `--copy-to-gpu` | off | Copy each file from host to device memory after reading (`aisio-cpu` and `posix` only) |
-| `--async` | off | Use async API when using `cufile` backend |
 | `--summary` | off | Print I/O and dataset statistics after completion |
 | `--help` | | Print usage |
 
@@ -118,9 +117,11 @@ filperf 0000:03:00.0 --homi-id 1 --xal-shm /xal_dev0 --data-dir /mnt/datasets/im
 ```
 
 `posix` and `cufile` read through the mounted file system.
-`cufile` additionally requires CUDA with the cuFile library. Direct NVMe-to-GPU
-(GPUDirect Storage) transfers need the kernel-side GDS driver (`nvidia-fs`); without
-it, cuFile falls back to a compatibility path that stages through host memory.
+`cufile` additionally requires CUDA with the cuFile library, and `cufile-stream` is the
+same backend with every read ordered on a CUDA stream through `cuFileReadAsync`.
+Direct NVMe-to-GPU (GPUDirect Storage) transfers need the kernel-side GDS driver
+(`nvidia-fs`); without it, cuFile falls back to a compatibility path that stages
+through host memory.
 For these file-level backends, IOPS equals File/s since each file is a single I/O.
 
 ```

@@ -66,6 +66,6 @@ int
 fil_file_submit(struct fil_iter *iter);
 
 int
-fil_cufile_async_submit(struct fil_iter *iter);
+fil_cufile_stream_submit(struct fil_iter *iter);
 
 #endif
