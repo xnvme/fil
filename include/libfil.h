@@ -38,7 +38,6 @@ struct fil_opts {
 	uint32_t queue_depth; ///< The NVMe queue depth
 	uint32_t batch_size;  ///< The number of files per batch
 	bool buffered;        ///< Whether to use O_DIRECT with POSIX
-	bool async;           ///< Whether to use async API with cuFile
 	bool register_bufs;   ///< Register cuFile device buffers with cuFileBufRegister
 	bool copy_to_gpu;     ///< aisio-cpu/posix: copy files host->device after read
 };

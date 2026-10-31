@@ -15,6 +15,7 @@
 
 #include <libfil.h>
 #include <fil_io.h>
+#include <fil_opends.h>
 #include <fil_iter.h>
 #include <fil_time.h>
 #include <fil_util.h>
@@ -75,7 +76,27 @@ _xnvme_setup(struct fil_iter *iter, struct fil_dev *device, const char *uri)
 		iter->type = FIL_FILE;
 		return 0;
 	} else if (strcmp(backend, "cufile") == 0) {
-		iter->type = FIL_FILE;
+		iter->type = FIL_CUFILE;
+	} else if (strcmp(backend, "cufile-stream") == 0) {
+		iter->type = FIL_CUFILE;
+		iter->mode = FIL_STREAM;
+	} else if (strcmp(backend, "opends") == 0) {
+		iter->type = FIL_OPENDS;
+		return 0;
+	} else if (strcmp(backend, "opends-stream") == 0) {
+		iter->type = FIL_OPENDS;
+		iter->mode = FIL_STREAM;
+		return 0;
+	} else if (strcmp(backend, "opends-async") == 0) {
+		iter->type = FIL_OPENDS;
+		iter->mode = FIL_ASYNC;
+		return 0;
+	} else {
+		fprintf(stderr, "Invalid backend: %s\n", backend);
+		return EINVAL;
+	}
+
+	if (iter->type == FIL_CUFILE) {
 #ifdef FIL_CUDA_ENABLED
 		status = cuFileDriverOpen();
 		if (status.err != CU_FILE_SUCCESS) {
@@ -84,9 +105,6 @@ _xnvme_setup(struct fil_iter *iter, struct fil_dev *device, const char *uri)
 		}
 #endif
 		return 0;
-	} else {
-		fprintf(stderr, "Invalid backend: %s\n", backend);
-		return EINVAL;
 	}
 
 	dev = xnvme_dev_open(uri, &opts);
@@ -643,9 +661,15 @@ _create_order(struct fil_iter *iter)
 
 // cuFile always reads into GPU memory, posix only with copy_to_gpu
 static bool
+_reads_files(struct fil_iter *iter)
+{
+	return iter->type == FIL_FILE || iter->type == FIL_CUFILE || iter->type == FIL_OPENDS;
+}
+
+static bool
 _file_buffers_on_device(struct fil_iter *iter)
 {
-	return (strcmp(iter->opts->backend, "cufile") == 0) || iter->opts->copy_to_gpu;
+	return iter->type == FIL_CUFILE || iter->opts->copy_to_gpu;
 }
 
 static int
@@ -724,6 +748,7 @@ _alloc(struct fil_iter *iter, uint32_t n_buffers)
 #endif
 				break;
 			case FIL_FILE:
+			case FIL_CUFILE:
 				if (!_file_buffers_on_device(iter)) {
 					// Aligned, as the reads are O_DIRECT unless buffered
 					err = posix_memalign(&device->buffers[j],
@@ -744,8 +769,7 @@ _alloc(struct fil_iter *iter, uint32_t n_buffers)
 						err);
 					return err;
 				}
-				if (strcmp(iter->opts->backend, "cufile") == 0 &&
-				    iter->opts->register_bufs) {
+				if (iter->type == FIL_CUFILE && iter->opts->register_bufs) {
 					CUfileError_t fstatus = cuFileBufRegister(
 						device->buffers[j], iter->buffer_size, 0);
 					if (fstatus.err != CU_FILE_SUCCESS) {
@@ -756,6 +780,14 @@ _alloc(struct fil_iter *iter, uint32_t n_buffers)
 					}
 				}
 #endif
+				break;
+			case FIL_OPENDS:
+				err = fil_opends_buf_alloc(iter, &device->buffers[j]);
+				if (err) {
+					fprintf(stderr, "Could not allocate buffers[%d]: %d\n", i,
+						err);
+					return err;
+				}
 				break;
 			}
 			if (!device->buffers[j]) {
@@ -778,7 +810,7 @@ _alloc(struct fil_iter *iter, uint32_t n_buffers)
 			}
 		}
 
-		if (iter->type == FIL_FILE) {
+		if (_reads_files(iter)) {
 			device->file_io = malloc(sizeof(struct fil_file_io));
 			if (!device->file_io) {
 				err = errno;
@@ -860,7 +892,7 @@ _alloc(struct fil_iter *iter, uint32_t n_buffers)
 	}
 
 #ifdef FIL_CUDA_ENABLED
-	if (iter->opts->async) {
+	if (iter->mode == FIL_STREAM && iter->type == FIL_CUFILE) {
 		iter->cufile_io = malloc(sizeof(struct fil_cufile_io));
 		if (!iter->cufile_io) {
 			err = errno;
@@ -913,6 +945,13 @@ _alloc(struct fil_iter *iter, uint32_t n_buffers)
 		}
 	}
 #endif
+
+	if (iter->type == FIL_OPENDS) {
+		err = fil_opends_io_alloc(iter);
+		if (err) {
+			return err;
+		}
+	}
 
 	iter->data = malloc(sizeof(struct fil_data));
 	if (!iter->data) {
@@ -967,18 +1006,23 @@ fil_term(struct fil_iter *iter)
 			xnvme_queue_term(device->queue);
 			break;
 		case FIL_FILE:
+		case FIL_CUFILE:
 			for (uint32_t j = 0; j < device->n_buffers; j++) {
 				if (!_file_buffers_on_device(iter)) {
 					free(device->buffers[j]);
 					continue;
 				}
 #ifdef FIL_CUDA_ENABLED
-				if (strcmp(iter->opts->backend, "cufile") == 0 &&
-				    iter->opts->register_bufs) {
+				if (iter->type == FIL_CUFILE && iter->opts->register_bufs) {
 					cuFileBufDeregister(device->buffers[j]);
 				}
 				cudaFree(device->buffers[j]);
 #endif
+			}
+			break;
+		case FIL_OPENDS:
+			for (uint32_t j = 0; j < device->n_buffers; j++) {
+				fil_opends_buf_free(device->buffers[j]);
 			}
 			break;
 		}
@@ -987,7 +1031,9 @@ fil_term(struct fil_iter *iter)
 		}
 		xnvme_dev_close(device->dev);
 #ifdef FIL_CUDA_ENABLED
-		cuFileDriverClose();
+		if (iter->type != FIL_OPENDS) {
+			cuFileDriverClose();
+		}
 #endif
 		if (device->file_io) {
 			free(device->file_io->buffer);
@@ -1010,6 +1056,9 @@ fil_term(struct fil_iter *iter)
 		free(iter->cufile_io->streams);
 	}
 #endif
+	if (iter->type == FIL_OPENDS) {
+		fil_opends_term(iter);
+	}
 	if (iter->data) {
 		free(iter->data->order);
 		free(iter->data);
@@ -1040,6 +1089,13 @@ _init_stats(struct fil_stats **stats)
 	return 0;
 }
 
+static bool
+_uses_homi(const struct fil_opts *opts)
+{
+	return strncmp(opts->backend, "aisio-", strlen("aisio-")) == 0 ||
+	       strncmp(opts->backend, "opends", strlen("opends")) == 0;
+}
+
 int
 fil_init(struct fil_iter **iter, char **dev_uris, uint32_t n_devs, struct fil_opts *opts)
 {
@@ -1062,8 +1118,8 @@ fil_init(struct fil_iter **iter, char **dev_uris, uint32_t n_devs, struct fil_op
 		return EINVAL;
 	}
 
-	if (opts->xal_shm[0] == '\0' && strncmp(opts->backend, "aisio-", strlen("aisio-")) == 0) {
-		fprintf(stderr, "xal_shm is required for the aisio backends\n");
+	if (opts->xal_shm[0] == '\0' && _uses_homi(opts)) {
+		fprintf(stderr, "xal_shm is required for the aisio and opends backends\n");
 		return EINVAL;
 	}
 
@@ -1074,15 +1130,16 @@ fil_init(struct fil_iter **iter, char **dev_uris, uint32_t n_devs, struct fil_op
 
 #ifndef FIL_CUDA_ENABLED
 	if (strcmp(opts->backend, "aisio-gpu") == 0 || strcmp(opts->backend, "cufile") == 0 ||
-	    opts->copy_to_gpu) {
+	    strcmp(opts->backend, "cufile-stream") == 0 ||
+	    strncmp(opts->backend, "opends", strlen("opends")) == 0 || opts->copy_to_gpu) {
 		fprintf(stderr, "fil is built without CUDA, which %s needs\n",
 			opts->copy_to_gpu ? "copy_to_gpu" : opts->backend);
 		return ENOTSUP;
 	}
 #endif
 
-	if (!opts->homi_id && strncmp(opts->backend, "aisio-", strlen("aisio-")) == 0) {
-		fprintf(stderr, "homi_id is required for the aisio backends\n");
+	if (!opts->homi_id && _uses_homi(opts)) {
+		fprintf(stderr, "homi_id is required for the aisio and opends backends\n");
 		return EINVAL;
 	}
 
@@ -1091,12 +1148,8 @@ fil_init(struct fil_iter **iter, char **dev_uris, uint32_t n_devs, struct fil_op
 		return EINVAL;
 	}
 
-	if (opts->async && strcmp(opts->backend, "cufile") != 0) {
-		fprintf(stderr, "opts->async == true is only compatible with cuFile backend");
-		return EINVAL;
-	}
-
-	if (opts->register_bufs && strcmp(opts->backend, "cufile") != 0) {
+	if (opts->register_bufs && strcmp(opts->backend, "cufile") != 0 &&
+	    strcmp(opts->backend, "cufile-stream") != 0) {
 		fprintf(stderr,
 			"opts->register_bufs == true is only compatible with cuFile backend");
 		return EINVAL;
@@ -1173,6 +1226,14 @@ fil_init(struct fil_iter **iter, char **dev_uris, uint32_t n_devs, struct fil_op
 		}
 	}
 
+	if (_iter->type == FIL_OPENDS) {
+		err = fil_opends_setup(_iter->opts);
+		if (err) {
+			fil_term(_iter);
+			return err;
+		}
+	}
+
 	err = _alloc(_iter, _iter->opts->batch_size);
 	if (err) {
 		fil_term(_iter);
@@ -1192,8 +1253,18 @@ fil_init(struct fil_iter **iter, char **dev_uris, uint32_t n_devs, struct fil_op
 		_iter->io_fn = fil_cpu_submit;
 		break;
 	case FIL_FILE:
-		if (_iter->opts->async) {
-			_iter->io_fn = fil_cufile_async_submit;
+	case FIL_CUFILE:
+		if (_iter->mode == FIL_STREAM) {
+			_iter->io_fn = fil_cufile_stream_submit;
+		} else {
+			_iter->io_fn = fil_file_submit;
+		}
+		break;
+	case FIL_OPENDS:
+		if (_iter->mode == FIL_ASYNC) {
+			_iter->io_fn = fil_opends_async_submit;
+		} else if (_iter->mode == FIL_STREAM) {
+			_iter->io_fn = fil_opends_stream_submit;
 		} else {
 			_iter->io_fn = fil_file_submit;
 		}
@@ -1270,7 +1341,7 @@ fil_next(struct fil_iter *iter, struct fil_output **output)
 		FIL_SHUFFLE(iter->data->order, uint64_t, iter->data->n_entries, uint64_t);
 	}
 
-	err = iter->type == FIL_FILE ? iter->io_fn(iter) : _read_batch(iter);
+	err = _reads_files(iter) ? iter->io_fn(iter) : _read_batch(iter);
 	if (err) {
 		fprintf(stderr, "Data reading failed, err: %d\n", err);
 		return err;
@@ -1294,7 +1365,6 @@ fil_opts_default()
 				.queue_depth = 128,
 				.batch_size = 1,
 				.buffered = false,
-				.async = false,
 				.register_bufs = false,
 				.copy_to_gpu = false};
 
