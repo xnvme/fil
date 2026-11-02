@@ -52,6 +52,7 @@ xal_dep = dependency(
 
 opends_dep = dependency(
   'opends_aisio',
+  version: '>=0.2.0',
   required: get_option('opends')
 )
 if get_option('opends').enabled() and not have_cuda

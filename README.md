@@ -14,9 +14,9 @@ cases.
 - CUDA with cuFile, optional: without it the `aisio-gpu`, `cufile` and `opends` backends
   and `--copy-to-gpu` are not built, and the others are. The `cuda` build option
   (`auto`, `enabled`, `disabled`) chooses.
-- [OpenDS](https://github.com/xnvme/opends), optional and needing CUDA: without its
-  `opends_aisio` library the `opends` backends are not built, and the others are. The
-  `opends` build option (`auto`, `enabled`, `disabled`) chooses.
+- [OpenDS](https://github.com/xnvme/opends) 0.2.0 or later, optional and needing CUDA:
+  without its `opends_aisio` library the `opends` backends are not built, and the others
+  are. The `opends` build option (`auto`, `enabled`, `disabled`) chooses.
 
 ## Building
 
