@@ -96,7 +96,7 @@ filperf [<device-uri>] --data-dir <path> [options]
 | Option | Default | Description |
 |---|---|---|
 | `--data-dir <path>` | _(required)_ | Absolute path to the directory containing class subdirectories |
-| `--xal-shm <name>` | _(none)_ | Name of the `xal-server` index; required for the `aisio` and `opends` backends |
+| `--xal-shm <name>` | _(none)_ | Name of the `xal-server` index. Required for the `aisio` backends. Optional for the `opends` backends, which pass it to OpenDS as `OPENDS_XAL_SHM` |
 | `--nsid <n>` | `1` | Namespace |
 | `--backend <name>` | `aisio-cpu` | I/O backend: `aisio-cpu`, `aisio-gpu`, `aisio-p2p`, `posix`, `cufile`, `cufile-stream`, `opends`, `opends-stream`, `opends-async` |
 | `--homi-id <n>` | _(none)_ | Id of the `homi` server holding the device; required for the `aisio` and `opends` backends |
@@ -114,7 +114,7 @@ filperf [<device-uri>] --data-dir <path> [options]
 `posix`, `cufile` and `opends` need no device uri: `opends` reads the device held by the
 `homi` server named by `--homi-id`. `--iosize` and `--queue-depth` do not apply to
 `opends`, which is tuned through its own `OPENDS_AISIO_*` environment variables, listed
-in the OpenDS README. FIL sets `OPENDS_AISIO_HOMI_ID` and `OPENDS_XAL_SHM` itself.
+in the OpenDS README. FIL sets `OPENDS_AISIO_HOMI_ID` itself, and `OPENDS_XAL_SHM` when `--xal-shm` is given.
 
 ### Examples
 

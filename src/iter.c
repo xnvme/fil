@@ -1090,6 +1090,13 @@ _init_stats(struct fil_stats **stats)
 }
 
 static bool
+_xal_shm_required(const struct fil_opts *opts)
+{
+	return strcmp(opts->backend, "aisio-cpu") == 0 ||
+	       strcmp(opts->backend, "aisio-gpu") == 0 || strcmp(opts->backend, "aisio-p2p") == 0;
+}
+
+static bool
 _uses_homi(const struct fil_opts *opts)
 {
 	return strncmp(opts->backend, "aisio-", strlen("aisio-")) == 0 ||
@@ -1118,8 +1125,8 @@ fil_init(struct fil_iter **iter, char **dev_uris, uint32_t n_devs, struct fil_op
 		return EINVAL;
 	}
 
-	if (opts->xal_shm[0] == '\0' && _uses_homi(opts)) {
-		fprintf(stderr, "xal_shm is required for the aisio and opends backends\n");
+	if (opts->xal_shm[0] == '\0' && _xal_shm_required(opts)) {
+		fprintf(stderr, "xal_shm is required for the aisio backends\n");
 		return EINVAL;
 	}
 
