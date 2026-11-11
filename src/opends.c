@@ -39,7 +39,7 @@ fil_opends_setup(const struct fil_opts *opts)
 
 	snprintf(homi_id, sizeof(homi_id), "%u", opts->homi_id);
 	if (setenv("OPENDS_AISIO_HOMI_ID", homi_id, 1) ||
-	    setenv("OPENDS_XAL_SHM", opts->xal_shm, 1)) {
+	    (opts->xal_shm[0] && setenv("OPENDS_XAL_SHM", opts->xal_shm, 1))) {
 		return errno;
 	}
 

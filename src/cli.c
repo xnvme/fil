@@ -23,7 +23,8 @@ print_help(const char *name)
 	fprintf(stderr, "\t --data-dir \t | \t Absolute path to a directory containing "
 			"subdirectories with files\n");
 	fprintf(stderr, "\t --xal-shm \t | \t The name of the xal-server index of the file "
-			"system holding data-dir. Required for the aisio and opends backends\n");
+			"system holding data-dir. Required for the aisio backends. Optional "
+			"for the opends backends, which pass it to OpenDS as OPENDS_XAL_SHM\n");
 	fprintf(stderr, "\t --nsid \t | \t The namespace (default = 1)\n");
 	fprintf(stderr, "\t --backend \t | \t The backend to use for reading files (aisio-cpu "
 			"[default], aisio-gpu, aisio-p2p, posix, cufile, cufile-stream, opends, "
