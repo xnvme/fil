@@ -11,7 +11,7 @@ Each version below is the oldest fil builds against.
 
 - [xNVMe](https://xnvme.io/) 0.8.0, with `homi` and `qublk` for the `aisio` and `opends`
   backends
-- [xal](https://github.com/xnvme/xal) 0.3.4, with `xal-server` for the `aisio` and
+- [xal](https://github.com/xnvme/xal) 0.4.0, with `xal-server` for the `aisio` and
   `opends` backends
 - CUDA with cuFile, optional: without it the `aisio-gpu`, `cufile` and `opends` backends
   and `--copy-to-gpu` are not built, and the others are. The `cuda` build option
