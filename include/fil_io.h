@@ -23,11 +23,6 @@ struct fil_data {
 	uint64_t index;
 };
 
-struct fil_file_io {
-	char path[PATH_MAX];
-	void *buffer;
-};
-
 #ifdef FIL_CUDA_ENABLED
 struct fil_cufile_io {
 	CUfileDescr_t *descr;
@@ -52,24 +47,24 @@ gpu_io_launch(struct xnvme_cuda_queue **queues_dev, uint32_t n_queues,
 	      struct xnvme_spec_cmd *cmds_dev, uint32_t n_io, uint32_t queue_depth);
 
 struct xnvme_cmd_ctx;
+struct fil_worker;
 
 void
 fil_io_cb(struct xnvme_cmd_ctx *ctx, void *cb_arg);
 
 int
-fil_cpu_submit(struct fil_iter *iter);
+fil_cpu_submit(struct fil_worker *w);
 
 int
-fil_gpu_submit(struct fil_iter *iter);
+fil_gpu_submit(struct fil_worker *w);
 
 int
-fil_file_submit(struct fil_iter *iter);
+fil_file_submit(struct fil_worker *w);
 
 int
-fil_cufile_stream_submit(struct fil_iter *iter);
+fil_cufile_stream_submit(struct fil_worker *w);
 
 int
-fil_open_next(struct fil_iter *iter, uint32_t i, int flags, void **buffer, int *fd,
-	      uint64_t *size);
+fil_open_next(struct fil_worker *w, uint32_t i, int flags, void **buffer, int *fd, uint64_t *size);
 
 #endif

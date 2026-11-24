@@ -45,6 +45,17 @@
 #define UPCIE_HEAP_SIZE(buf_total) \
 	(((buf_total) + UPCIE_HEAP_OVERHEAD + UPCIE_HEAP_ALIGN - 1) & ~(UPCIE_HEAP_ALIGN - 1))
 
+static void
+_queues_term(struct fil_iter *iter)
+{
+	for (uint32_t t = 0; iter->workers && t < iter->n_workers; t++) {
+		if (iter->workers[t].queue) {
+			xnvme_queue_term(iter->workers[t].queue);
+			iter->workers[t].queue = NULL;
+		}
+	}
+}
+
 static int
 _xnvme_setup(struct fil_iter *iter, struct fil_dev *device, const char *uri)
 {
@@ -165,20 +176,25 @@ _xnvme_setup(struct fil_iter *iter, struct fil_dev *device, const char *uri)
 		}
 #endif
 	} else {
-		err = xnvme_queue_init(dev, iter->opts->queue_depth, 0, &device->queue);
-		if (err) {
-			xnvme_dev_close(dev);
-			fprintf(stderr, "xnvme_queue_init(): %d\n", err);
-			return err;
-		}
+		// A queue for each worker, so they submit without sharing one
+		for (uint32_t t = 0; t < iter->n_workers; t++) {
+			struct fil_worker *w = &iter->workers[t];
 
-		err = xnvme_queue_set_cb(device->queue, fil_io_cb, &device->io_errors);
-		if (err) {
-			fprintf(stderr, "xnvme_queue_set_cb(): %d\n", err);
-			xnvme_queue_term(device->queue);
-			device->queue = NULL;
-			xnvme_dev_close(dev);
-			return err;
+			err = xnvme_queue_init(dev, iter->opts->queue_depth, 0, &w->queue);
+			if (err) {
+				fprintf(stderr, "xnvme_queue_init(): %d\n", err);
+				_queues_term(iter);
+				xnvme_dev_close(dev);
+				return err;
+			}
+
+			err = xnvme_queue_set_cb(w->queue, fil_io_cb, &w->io_errors);
+			if (err) {
+				fprintf(stderr, "xnvme_queue_set_cb(): %d\n", err);
+				_queues_term(iter);
+				xnvme_dev_close(dev);
+				return err;
+			}
 		}
 	}
 
@@ -708,7 +724,6 @@ _alloc(struct fil_iter *iter, uint32_t n_buffers)
 	for (uint32_t i = 0; i < iter->n_devs; i++) {
 		struct fil_dev *device = iter->devs[i];
 		device->n_buffers = iter->output->n_buffers / iter->n_devs;
-		device->buf = 0;
 		device->buffers = malloc(sizeof(void *) * device->n_buffers);
 		if (!device->buffers) {
 			err = errno;
@@ -810,24 +825,7 @@ _alloc(struct fil_iter *iter, uint32_t n_buffers)
 			}
 		}
 
-		if (_reads_files(iter)) {
-			device->file_io = malloc(sizeof(struct fil_file_io));
-			if (!device->file_io) {
-				err = errno;
-				fprintf(stderr, "Could not allocate IO struct: %d\n", err);
-				return err;
-			}
-			device->file_io->buffer = NULL;
-			if (iter->opts->copy_to_gpu) {
-				device->file_io->buffer = malloc(iter->buffer_size);
-				if (!device->file_io->buffer) {
-					err = errno;
-					fprintf(stderr, "Could not allocate bounce buffer: %d\n",
-						err);
-					return err;
-				}
-			}
-		} else if (iter->type == FIL_GPU) {
+		if (iter->type == FIL_GPU) {
 #ifdef FIL_CUDA_ENABLED
 			uint32_t n_cmds =
 				(iter->buffer_size / iter->opts->iosize) * device->n_buffers;
@@ -888,6 +886,16 @@ _alloc(struct fil_iter *iter, uint32_t n_buffers)
 				device->gpu_io.prp1_base[j] = prp1;
 			}
 #endif
+		}
+	}
+
+	for (uint32_t t = 0; _reads_files(iter) && iter->opts->copy_to_gpu && t < iter->n_workers;
+	     t++) {
+		iter->workers[t].bounce = malloc(iter->buffer_size);
+		if (!iter->workers[t].bounce) {
+			err = errno;
+			fprintf(stderr, "Could not allocate bounce buffer: %d\n", err);
+			return err;
 		}
 	}
 
@@ -991,7 +999,7 @@ fil_term(struct fil_iter *iter)
 			for (uint32_t j = 0; j < device->n_buffers; j++) {
 				xnvme_buf_free(device->dev, device->buffers[j]);
 			}
-			xnvme_queue_term(device->queue);
+			_queues_term(iter);
 			break;
 		case FIL_CPU:
 			for (uint32_t j = 0; j < device->n_buffers; j++) {
@@ -1003,7 +1011,7 @@ fil_term(struct fil_iter *iter)
 #endif
 			}
 			free(device->gpu_buffers);
-			xnvme_queue_term(device->queue);
+			_queues_term(iter);
 			break;
 		case FIL_FILE:
 		case FIL_CUFILE:
@@ -1035,10 +1043,6 @@ fil_term(struct fil_iter *iter)
 			cuFileDriverClose();
 		}
 #endif
-		if (device->file_io) {
-			free(device->file_io->buffer);
-			free(device->file_io);
-		}
 		free(device->buffers);
 		_dataset_free(device);
 		free(device->data_dir);
@@ -1070,6 +1074,10 @@ fil_term(struct fil_iter *iter)
 		free(iter->output->buf_len);
 		free(iter->output);
 	}
+	for (uint32_t t = 0; iter->workers && t < iter->n_workers; t++) {
+		free(iter->workers[t].bounce);
+	}
+	free(iter->workers);
 	free(iter->stats);
 	free(iter);
 }
@@ -1087,6 +1095,76 @@ _init_stats(struct fil_stats **stats)
 	memset(_stats, 0, sizeof(struct fil_stats));
 	*stats = _stats;
 	return 0;
+}
+
+// Worker t reads the slots [t * batch_size / n, (t + 1) * batch_size / n)
+static int
+_workers_init(struct fil_iter *iter)
+{
+	uint32_t n = 1, batch_size = iter->opts->batch_size;
+
+	iter->workers = calloc(n, sizeof(*iter->workers));
+	if (!iter->workers) {
+		fprintf(stderr, "Could not allocate workers: %d\n", errno);
+		return errno;
+	}
+	iter->n_workers = n;
+
+	for (uint32_t t = 0; t < n; t++) {
+		struct fil_worker *w = &iter->workers[t];
+
+		w->iter = iter;
+		w->first = (uint64_t)t * batch_size / n;
+		w->n = (uint64_t)(t + 1) * batch_size / n - w->first;
+	}
+	return 0;
+}
+
+/**
+ * Read the batch at the current index, each worker its slots. The batch takes as long as its
+ * slowest worker, whose prep and IO times are the batch's. A failure other than ESTALE wins
+ * over ESTALE.
+ */
+static int
+_run_workers(struct fil_iter *iter)
+{
+	struct fil_worker *slowest = &iter->workers[0];
+	int err = 0;
+
+	for (uint32_t t = 0; t < iter->n_workers; t++) {
+		struct fil_worker *w = &iter->workers[t];
+
+		memset(&w->stats, 0, sizeof(w->stats));
+		w->base = iter->data->index;
+		w->err = iter->io_fn(w);
+	}
+
+	for (uint32_t t = 0; t < iter->n_workers; t++) {
+		struct fil_worker *w = &iter->workers[t];
+
+		if (w->err && (!err || err == ESTALE)) {
+			err = w->err;
+		}
+		if (w->stats.prep_time + w->stats.io_time >
+		    slowest->stats.prep_time + slowest->stats.io_time) {
+			slowest = w;
+		}
+	}
+	iter->stats->prep_time += slowest->stats.prep_time;
+	iter->stats->io_time += slowest->stats.io_time;
+
+	return err;
+}
+
+// Counts what the workers read, and moves past the batch
+static void
+_finish_batch(struct fil_iter *iter)
+{
+	for (uint32_t t = 0; t < iter->n_workers; t++) {
+		iter->stats->bytes += iter->workers[t].stats.bytes;
+		iter->stats->io += iter->workers[t].stats.io;
+	}
+	iter->data->index += iter->opts->batch_size;
 }
 
 static bool
@@ -1200,6 +1278,12 @@ fil_init(struct fil_iter **iter, char **dev_uris, uint32_t n_devs, struct fil_op
 		return err;
 	}
 
+	err = _workers_init(_iter);
+	if (err) {
+		fil_term(_iter);
+		return err;
+	}
+
 	// The largest file sizes the buffers, and with them the heap the device is opened with
 	for (uint32_t i = 0; i < n_devs; i++) {
 		struct fil_dev *device = malloc(sizeof(struct fil_dev));
@@ -1296,13 +1380,7 @@ fil_init(struct fil_iter **iter, char **dev_uris, uint32_t n_devs, struct fil_op
 static int
 _read_batch(struct fil_iter *iter)
 {
-	uint64_t index = iter->data->index, bytes = iter->stats->bytes, io = iter->stats->io;
-	uint64_t bufs[iter->n_devs];
 	int err;
-
-	for (uint32_t i = 0; i < iter->n_devs; i++) {
-		bufs[i] = iter->devs[i]->buf;
-	}
 
 	for (uint32_t attempt = 0; attempt < FIL_READ_ATTEMPTS; attempt++) {
 		bool current = true;
@@ -1314,7 +1392,7 @@ _read_batch(struct fil_iter *iter)
 			}
 		}
 
-		err = iter->io_fn(iter);
+		err = _run_workers(iter);
 		if (err && err != ESTALE) {
 			return err;
 		}
@@ -1324,13 +1402,6 @@ _read_batch(struct fil_iter *iter)
 		}
 		if (!err && current) {
 			return 0;
-		}
-
-		iter->data->index = index;
-		iter->stats->bytes = bytes;
-		iter->stats->io = io;
-		for (uint32_t i = 0; i < iter->n_devs; i++) {
-			iter->devs[i]->buf = bufs[i];
 		}
 	}
 
@@ -1348,11 +1419,12 @@ fil_next(struct fil_iter *iter, struct fil_output **output)
 		FIL_SHUFFLE(iter->data->order, uint64_t, iter->data->n_entries, uint64_t);
 	}
 
-	err = _reads_files(iter) ? iter->io_fn(iter) : _read_batch(iter);
+	err = _reads_files(iter) ? _run_workers(iter) : _read_batch(iter);
 	if (err) {
 		fprintf(stderr, "Data reading failed, err: %d\n", err);
 		return err;
 	}
+	_finish_batch(iter);
 
 	*output = iter->output;
 
