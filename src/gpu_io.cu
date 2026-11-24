@@ -15,7 +15,7 @@
  * iteration because it contains __syncthreads() internally.
  */
 __global__ static void
-gpu_read_kernel(struct xnvme_cuda_queue **qps, struct xnvme_spec_cmd *cmds, uint32_t n_io)
+gpu_read_kernel(struct xnvme_cuda_queue **qps, union xnvme_spec_sqe *cmds, uint32_t n_io)
 {
 	const uint32_t bid = blockIdx.x;
 	const uint32_t tid = threadIdx.x;
@@ -35,7 +35,7 @@ gpu_read_kernel(struct xnvme_cuda_queue **qps, struct xnvme_spec_cmd *cmds, uint
 
 extern "C" void
 gpu_io_launch(struct xnvme_cuda_queue **queues_dev, uint32_t n_queues,
-	      struct xnvme_spec_cmd *cmds_dev, uint32_t n_io, uint32_t queue_depth)
+	      union xnvme_spec_sqe *cmds_dev, uint32_t n_io, uint32_t queue_depth)
 {
 	gpu_read_kernel<<<n_queues, queue_depth>>>(queues_dev, cmds_dev, n_io);
 }

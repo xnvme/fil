@@ -49,7 +49,7 @@ static int
 _xnvme_setup(struct fil_iter *iter, struct fil_dev *device, const char *uri)
 {
 	const char *backend = iter->opts->backend;
-	struct xnvme_opts opts = xnvme_opts_default();
+	struct xnvme_opts opts = {0};
 	size_t heap_size =
 		UPCIE_HEAP_SIZE(iter->buffer_size * (iter->opts->batch_size / iter->n_devs));
 	struct xnvme_dev *dev;
@@ -58,6 +58,7 @@ _xnvme_setup(struct fil_iter *iter, struct fil_dev *device, const char *uri)
 	CUfileError_t status;
 #endif
 
+	xnvme_opts_set_defaults(&opts);
 	opts.homi_id = iter->opts->homi_id;
 	opts.nsid = iter->opts->nsid;
 
@@ -835,7 +836,7 @@ _alloc(struct fil_iter *iter, uint32_t n_buffers)
 			device->gpu_io.n_io = 0;
 
 			err = cudaMallocHost((void **)&device->gpu_io.cmds_host,
-					     sizeof(struct xnvme_spec_cmd) * n_cmds);
+					     sizeof(union xnvme_spec_sqe) * n_cmds);
 			if (err) {
 				fprintf(stderr, "Could not allocate gpu_io.cmds_host: %d\n", err);
 				return err;
@@ -843,8 +844,7 @@ _alloc(struct fil_iter *iter, uint32_t n_buffers)
 
 			// Pre-fill the fields that are constant for the whole run so the
 			// per-batch hot loop only writes slba/nlb/prp1.
-			memset(device->gpu_io.cmds_host, 0,
-			       sizeof(struct xnvme_spec_cmd) * n_cmds);
+			memset(device->gpu_io.cmds_host, 0, sizeof(union xnvme_spec_sqe) * n_cmds);
 
 			for (uint32_t c = 0; c < n_cmds; c++) {
 				device->gpu_io.cmds_host[c].common.opcode =
@@ -853,7 +853,7 @@ _alloc(struct fil_iter *iter, uint32_t n_buffers)
 			}
 
 			err = cudaMalloc((void **)&device->gpu_io.cmds_dev,
-					 sizeof(struct xnvme_spec_cmd) * n_cmds);
+					 sizeof(union xnvme_spec_sqe) * n_cmds);
 			if (err) {
 				cudaFreeHost(device->gpu_io.cmds_host);
 				device->gpu_io.cmds_host = NULL;

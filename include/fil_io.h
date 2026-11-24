@@ -39,8 +39,8 @@ struct fil_cufile_io {
 #endif
 
 struct fil_gpu_io {
-	struct xnvme_spec_cmd *cmds_host;
-	struct xnvme_spec_cmd *cmds_dev;
+	union xnvme_spec_sqe *cmds_host;
+	union xnvme_spec_sqe *cmds_dev;
 	uint64_t *prp1_base;
 	uint32_t n_io;
 };
@@ -49,7 +49,7 @@ struct xnvme_cuda_queue;
 
 void
 gpu_io_launch(struct xnvme_cuda_queue **queues_dev, uint32_t n_queues,
-	      struct xnvme_spec_cmd *cmds_dev, uint32_t n_io, uint32_t queue_depth);
+	      union xnvme_spec_sqe *cmds_dev, uint32_t n_io, uint32_t queue_depth);
 
 struct xnvme_cmd_ctx;
 
