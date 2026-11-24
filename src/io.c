@@ -221,21 +221,30 @@ drain:
 }
 
 #ifdef FIL_CUDA_ENABLED
+/**
+ * Copy the worker's buffers to the GPU on its own stream; the default stream is shared by all
+ * threads and would take the workers' copies one at a time. Waits for the copies even when one
+ * fails, as the next batch reads into the same buffers.
+ */
 static int
 _copy_buffers_to_gpu(struct fil_worker *w, struct fil_dev *device)
 {
 	struct fil_iter *iter = w->iter;
-	int err;
+	int err = 0, serr;
 
 	for (uint32_t i = w->first; i < w->first + w->n; i++) {
-		err = cudaMemcpy(device->gpu_buffers[i], device->buffers[i],
-				 iter->output->buf_len[i], cudaMemcpyHostToDevice);
+		err = cudaMemcpyAsync(device->gpu_buffers[i], device->buffers[i],
+				      iter->output->buf_len[i], cudaMemcpyHostToDevice, w->stream);
 		if (err) {
 			fprintf(stderr, "Could not copy data to GPU memory, err: %d\n", err);
-			return err;
+			break;
 		}
 	}
-	return 0;
+	serr = cudaStreamSynchronize(w->stream);
+	if (serr) {
+		fprintf(stderr, "Could not synchronize the copy stream, err: %d\n", serr);
+	}
+	return err ? err : serr;
 }
 #endif
 
@@ -561,8 +570,14 @@ fil_file_submit(struct fil_worker *w)
 			} while ((uint64_t)bytes_read != size);
 
 #ifdef FIL_CUDA_ENABLED
+			// On the worker's stream, as the default one would take the workers'
+			// copies one at a time
 			if (iter->opts->copy_to_gpu) {
-				err = cudaMemcpy(buffer, dst, size, cudaMemcpyHostToDevice);
+				err = cudaMemcpyAsync(buffer, dst, size, cudaMemcpyHostToDevice,
+						      w->stream);
+				if (!err) {
+					err = cudaStreamSynchronize(w->stream);
+				}
 				if (err) {
 					fprintf(stderr,
 						"Could not copy data to GPU memory, err: %ld\n",

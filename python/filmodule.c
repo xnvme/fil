@@ -28,14 +28,14 @@ init(PyObject *self, PyObject *args, PyObject *keywds)
 	static char *kwlist[] = {"dev_uri",     "data_dir",   "xal_shm",  "backend",
 				 "homi_id",     "nsid",       "iosize",   "gpu_nqueues",
 				 "queue_depth", "batch_size", "buffered", "register_bufs",
-				 "copy_to_gpu", NULL};
+				 "copy_to_gpu", "threads",    NULL};
 
 	// Bools are parsed via 'p' into ints, then folded back into opts.
-	if (!PyArg_ParseTupleAndKeywords(args, keywds, "s|$sssIIiiiippp", kwlist, &dev_uri,
+	if (!PyArg_ParseTupleAndKeywords(args, keywds, "s|$sssIIiiiipppI", kwlist, &dev_uri,
 					 &opts.data_dir, &opts.xal_shm, &opts.backend,
 					 &opts.homi_id, &opts.nsid, &opts.iosize,
 					 &opts.gpu_nqueues, &opts.queue_depth, &opts.batch_size,
-					 &buffered, &register_bufs, &copy_to_gpu)) {
+					 &buffered, &register_bufs, &copy_to_gpu, &opts.threads)) {
 		return NULL;
 	}
 	opts.buffered = buffered;

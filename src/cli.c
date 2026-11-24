@@ -41,6 +41,10 @@ print_help(const char *name)
 	fprintf(stderr,
 		"\t --batch-size \t | \t The number of files to read per batch (default = 1)\n");
 	fprintf(stderr, "\t --batches \t | \t The number of batches to read (default = 1)\n");
+	fprintf(stderr, "\t --threads \t | \t The number of threads that read each batch between "
+			"them (default = 1). With 'aisio-cpu' and 'aisio-p2p' each has a queue "
+			"of its own. More than one needs a batch size no larger than the "
+			"dataset. Not for backend: 'aisio-gpu'\n");
 	fprintf(stderr, "\t --warmup \t | \t The number of un-timed warmup batches to read before "
 			"the timed run (default = 0)\n");
 	fprintf(stderr, "\t --buffered \t | \t Don't open with O_DIRECT when using POSIX\n");
@@ -154,6 +158,11 @@ parse_args(int argc, char *argv[], struct fil_cli_args *args, struct fil_opts *o
 		} else if (strcmp(argv[i], "--batches") == 0) {
 			if (_parse_u32(_value(argc, argv, &i), 1, &args->batches)) {
 				fprintf(stderr, "Invalid number of batches: %s\n", argv[i]);
+				return -EINVAL;
+			}
+		} else if (strcmp(argv[i], "--threads") == 0) {
+			if (_parse_u32(_value(argc, argv, &i), 1, &opts->threads)) {
+				fprintf(stderr, "Invalid number of threads: %s\n", argv[i]);
 				return -EINVAL;
 			}
 		} else if (strcmp(argv[i], "--warmup") == 0) {
