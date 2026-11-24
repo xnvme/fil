@@ -590,6 +590,7 @@ fil_cufile_stream_submit(struct fil_iter *iter)
 	struct timespec start, end;
 	struct fil_cufile_io *cufile_io;
 	CUfileError_t status;
+	uint32_t nreg = 0;
 	uint64_t size;
 	void *buffer;
 	int fd, err = 0;
@@ -600,7 +601,7 @@ fil_cufile_stream_submit(struct fil_iter *iter)
 	for (uint32_t i = 0; i < iter->opts->batch_size; i++) {
 		err = fil_open_next(iter, i, O_RDONLY | O_DIRECT, &buffer, &fd, &size);
 		if (err) {
-			return err;
+			goto teardown;
 		}
 
 		memset(&cufile_io->descr[i], 0, sizeof(CUfileDescr_t));
@@ -610,8 +611,10 @@ fil_cufile_stream_submit(struct fil_iter *iter)
 		if (status.err != CU_FILE_SUCCESS) {
 			fprintf(stderr, "Could not register file, err: %d\n", status.err);
 			close(fd);
-			return status.err;
+			err = status.err;
+			goto teardown;
 		}
+		nreg = i + 1;
 		cufile_io->expected[i] = size;
 		cufile_io->actual[i] = 0;
 
@@ -651,7 +654,12 @@ fil_cufile_stream_submit(struct fil_iter *iter)
 	iter->stats->io_time += ELAPSED(start, end);
 
 teardown:
-	for (uint32_t i = 0; i < iter->opts->batch_size; i++) {
+	/* A failure can leave reads queued, and a handle with I/O in flight on it must not
+	 * be deregistered. */
+	for (uint32_t i = 0; err && i < nreg; i++) {
+		cudaStreamSynchronize(cufile_io->streams[i]);
+	}
+	for (uint32_t i = 0; i < nreg; i++) {
 		fd = cufile_io->descr[i].handle.fd;
 		cuFileHandleDeregister(cufile_io->handle[i]);
 		close(fd);
