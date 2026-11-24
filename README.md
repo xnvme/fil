@@ -7,8 +7,10 @@ cases.
 
 ## Dependencies
 
-- [xNVMe](https://xnvme.io/) (`main` branch), with `homi` and `qublk` for the `aisio`
-  and `opends` backends
+Each version below is the oldest fil builds against.
+
+- [xNVMe](https://xnvme.io/) 0.8.0, with `homi` and `qublk` for the `aisio` and `opends`
+  backends
 - [xal](https://github.com/xnvme/xal) 0.3.4, with `xal-server` for the `aisio` and
   `opends` backends
 - CUDA with cuFile, optional: without it the `aisio-gpu`, `cufile` and `opends` backends
@@ -16,7 +18,8 @@ cases.
   (`auto`, `enabled`, `disabled`) chooses.
 - [OpenDS](https://github.com/xnvme/opends) 0.2.0 or later, optional and needing CUDA:
   without its `opends_aisio` library the `opends` backends are not built, and the others
-  are. The `opends` build option (`auto`, `enabled`, `disabled`) chooses.
+  are. The `opends` build option (`auto`, `enabled`, `disabled`) chooses. OpenDS must be
+  built against the same xNVMe as fil: one built against an older xNVMe does not link.
 
 ## Building
 
@@ -58,7 +61,7 @@ devices = [
 ]
 ```
 
-The `homi` host heap (`--host_heap_size`) must hold the buffers of `aisio-cpu`:
+The `homi` host heap (`--host-heap-size`) must hold the buffers of `aisio-cpu`:
 `--batch-size` of them, each the size of the largest file.
 
 When `xal-server` re-indexes (with a `watchmode`), the `aisio` backends wait and read

@@ -278,7 +278,7 @@ fil_gpu_submit(struct fil_iter *iter)
 	struct xal_extent extent;
 	struct timespec start, end;
 	struct fil_dev *device;
-	struct xnvme_spec_cmd *cmd;
+	union xnvme_spec_sqe *cmd;
 	uint64_t nblocks, nbytes, slba, offset;
 	uint32_t dev_id, buf_id;
 	int err;
@@ -363,7 +363,7 @@ fil_gpu_submit(struct fil_iter *iter)
 			continue;
 		}
 		err = cudaMemcpy(device->gpu_io.cmds_dev, device->gpu_io.cmds_host,
-				 sizeof(struct xnvme_spec_cmd) * device->gpu_io.n_io,
+				 sizeof(union xnvme_spec_sqe) * device->gpu_io.n_io,
 				 cudaMemcpyHostToDevice);
 		if (err) {
 			fprintf(stderr, "cudaMemcpy failed: %d\n", err);
