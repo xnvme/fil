@@ -1,5 +1,6 @@
 #include <errno.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -51,6 +52,51 @@ print_help(const char *name)
 	fprintf(stderr, "\t --help \t | \t Print this message\n");
 }
 
+/** The value of the option at argv[*i], moving past it; NULL when the option comes last */
+static const char *
+_value(int argc, char *argv[], int *i)
+{
+	if (*i + 1 >= argc) {
+		fprintf(stderr, "Missing value for %s\n", argv[*i]);
+		return NULL;
+	}
+	return argv[++*i];
+}
+
+/**
+ * Parse a whole number in [min, max]; strtoul alone would turn "-1" into a huge number and
+ * ignore trailing garbage
+ */
+static int
+_parse_uint(const char *arg, uint64_t min, uint64_t max, uint64_t *out)
+{
+	unsigned long long v;
+	char *end;
+
+	if (!arg || arg[0] < '0' || arg[0] > '9') {
+		return -EINVAL;
+	}
+	errno = 0;
+	v = strtoull(arg, &end, 10);
+	if (errno || *end || v < min || v > max) {
+		return -EINVAL;
+	}
+	*out = v;
+	return 0;
+}
+
+static int
+_parse_u32(const char *arg, uint32_t min, uint32_t *out)
+{
+	uint64_t v;
+
+	if (_parse_uint(arg, min, UINT32_MAX, &v)) {
+		return -EINVAL;
+	}
+	*out = v;
+	return 0;
+}
+
 int
 parse_args(int argc, char *argv[], struct fil_cli_args *args, struct fil_opts *opts)
 {
@@ -61,60 +107,60 @@ parse_args(int argc, char *argv[], struct fil_cli_args *args, struct fil_opts *o
 
 	for (int i = 1; i < argc; i++) {
 		if (strcmp(argv[i], "--data-dir") == 0) {
-			opts->data_dir = argv[++i];
+			opts->data_dir = (char *)_value(argc, argv, &i);
+			if (!opts->data_dir) {
+				return -EINVAL;
+			}
 		} else if (strcmp(argv[i], "--xal-shm") == 0) {
-			opts->xal_shm = argv[++i];
+			opts->xal_shm = (char *)_value(argc, argv, &i);
+			if (!opts->xal_shm) {
+				return -EINVAL;
+			}
 		} else if (strcmp(argv[i], "--nsid") == 0) {
-			opts->nsid = strtoul(argv[++i], (char **)NULL, 10);
-			if (opts->nsid == 0) {
+			if (_parse_u32(_value(argc, argv, &i), 1, &opts->nsid)) {
 				fprintf(stderr, "Invalid nsid: %s\n", argv[i]);
 				return -EINVAL;
 			}
 		} else if (strcmp(argv[i], "--backend") == 0) {
-			opts->backend = argv[++i];
+			opts->backend = (char *)_value(argc, argv, &i);
+			if (!opts->backend) {
+				return -EINVAL;
+			}
 		} else if (strcmp(argv[i], "--homi-id") == 0) {
-			opts->homi_id = strtoul(argv[++i], (char **)NULL, 10);
-			if (opts->homi_id == 0) {
+			if (_parse_u32(_value(argc, argv, &i), 1, &opts->homi_id)) {
 				fprintf(stderr, "Invalid homi id: %s\n", argv[i]);
 				return -EINVAL;
 			}
 		} else if (strcmp(argv[i], "--iosize") == 0) {
-			opts->iosize = strtoul(argv[++i], (char **)NULL, 10);
-			if (opts->iosize == 0) {
+			if (_parse_uint(_value(argc, argv, &i), 1, UINT64_MAX, &opts->iosize)) {
 				fprintf(stderr, "Invalid iosize: %s\n", argv[i]);
 				return -EINVAL;
 			}
 		} else if (strcmp(argv[i], "--gpu-nqueues") == 0) {
-			opts->gpu_nqueues = strtol(argv[++i], (char **)NULL, 10);
-			if (opts->gpu_nqueues <= 0) {
+			if (_parse_u32(_value(argc, argv, &i), 1, &opts->gpu_nqueues)) {
 				fprintf(stderr, "Invalid number of GPU queues: %s\n", argv[i]);
 				return -EINVAL;
 			}
 		} else if (strcmp(argv[i], "--queue-depth") == 0) {
-			opts->queue_depth = strtol(argv[++i], (char **)NULL, 10);
-			if (opts->queue_depth <= 0) {
+			if (_parse_u32(_value(argc, argv, &i), 1, &opts->queue_depth)) {
 				fprintf(stderr, "Invalid queue depth: %s\n", argv[i]);
 				return -EINVAL;
 			}
 		} else if (strcmp(argv[i], "--batch-size") == 0) {
-			opts->batch_size = strtol(argv[++i], (char **)NULL, 10);
-			if (opts->batch_size <= 0) {
+			if (_parse_u32(_value(argc, argv, &i), 1, &opts->batch_size)) {
 				fprintf(stderr, "Invalid batch size: %s\n", argv[i]);
 				return -EINVAL;
 			}
 		} else if (strcmp(argv[i], "--batches") == 0) {
-			args->batches = strtol(argv[++i], (char **)NULL, 10);
-			if (args->batches <= 0) {
+			if (_parse_u32(_value(argc, argv, &i), 1, &args->batches)) {
 				fprintf(stderr, "Invalid number of batches: %s\n", argv[i]);
 				return -EINVAL;
 			}
 		} else if (strcmp(argv[i], "--warmup") == 0) {
-			long w = strtol(argv[++i], (char **)NULL, 10);
-			if (w < 0) {
+			if (_parse_u32(_value(argc, argv, &i), 0, &args->warmup)) {
 				fprintf(stderr, "Invalid number of warmup batches: %s\n", argv[i]);
 				return -EINVAL;
 			}
-			args->warmup = (uint32_t)w;
 		} else if (strcmp(argv[i], "--buffered") == 0) {
 			opts->buffered = true;
 		} else if (strcmp(argv[i], "--register_bufs") == 0) {
