@@ -46,7 +46,7 @@ xnvme_dep = dependency(
 
 xal_dep = dependency(
   'xal',
-  version: '0.3.4',
+  version: '>=0.4.0',
   required: true
 )
 
