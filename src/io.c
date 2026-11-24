@@ -530,23 +530,25 @@ fil_file_submit(struct fil_worker *w)
 		if (is_cufile) {
 
 			bytes_read = cuFileRead(fh, buffer, nbytes, 0, 0);
+			cuFileHandleDeregister(fh);
 			if (bytes_read < 0) {
 				err = bytes_read;
 				fprintf(stderr, "Could not read %s, err: %ld\n", path, err);
-				return err;
+				goto err_close;
 			}
 			if ((uint64_t)bytes_read != nbytes) {
 				fprintf(stderr,
 					"Could not read entire file %s, expected: %lu, actual: "
 					"%ld\n",
 					path, size, bytes_read);
-				return EIO;
+				err = EIO;
+				goto err_close;
 			}
-			cuFileHandleDeregister(fh);
 		} else if (is_opends) {
+			// Releases the handle, whether or not the read failed
 			err = fil_opends_file_read(dfh, buffer, nbytes, path);
 			if (err) {
-				return err;
+				goto err_close;
 			}
 		} else
 #endif
@@ -557,14 +559,15 @@ fil_file_submit(struct fil_worker *w)
 					err = errno;
 					fprintf(stderr, "Could not read %s, err: %ld\n", path,
 						err);
-					return err;
+					goto err_close;
 				}
 				if (err == 0) {
 					fprintf(stderr,
 						"Could not read entire file %s, expected: %lu, "
 						"actual: %ld\n",
 						path, size, bytes_read);
-					return EIO;
+					err = EIO;
+					goto err_close;
 				}
 				bytes_read += err;
 			} while ((uint64_t)bytes_read != size);
@@ -582,7 +585,7 @@ fil_file_submit(struct fil_worker *w)
 					fprintf(stderr,
 						"Could not copy data to GPU memory, err: %ld\n",
 						err);
-					return err;
+					goto err_close;
 				}
 			}
 #endif
@@ -592,6 +595,10 @@ fil_file_submit(struct fil_worker *w)
 		close(fd);
 	}
 	return 0;
+
+err_close:
+	close(fd);
+	return err;
 }
 
 #ifdef FIL_CUDA_ENABLED
