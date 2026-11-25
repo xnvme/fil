@@ -6,8 +6,8 @@ doc: |
   * Installs system packages via toolbox/pkgs and the CUDA toolkit
   * Retrieves xNVMe and xal at the versions given by the config, then builds
     and installs them
-  * Builds fil as debug with warnings as errors, with sub-timers enabled, and
-    as release; the release build is installed
+  * Builds fil as debug with warnings as errors, with and without CUDA, with
+    sub-timers enabled, and as release; the release build is installed
   * Builds the Python binding against the installed fil and imports it
   * Formats config.fil.testing.dev with XFS, populates it with a dataset, and
     tests reading it with the posix backend, which needs no GPU
@@ -104,6 +104,13 @@ steps:
     rm -rf {{ config.fil.source }}/builddir-debug
     meson setup {{ config.fil.source }}/builddir-debug {{ config.fil.source }} --buildtype=debug -Dwerror=true -Dcuda=enabled
     meson compile -C {{ config.fil.source }}/builddir-debug
+
+# What is left out without CUDA, and what is built only then, must still build
+- name: fil_build_nocuda
+  run: |
+    rm -rf {{ config.fil.source }}/builddir-nocuda
+    meson setup {{ config.fil.source }}/builddir-nocuda {{ config.fil.source }} --buildtype=debug -Dwerror=true -Dcuda=disabled
+    meson compile -C {{ config.fil.source }}/builddir-nocuda
 
 - name: fil_build_subtime
   run: |
