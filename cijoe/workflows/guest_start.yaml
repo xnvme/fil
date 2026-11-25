@@ -1,0 +1,74 @@
+# SPDX-FileCopyrightText: Samsung Electronics Co., Ltd
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
+doc: |
+  Start a QEMU guest as the target
+  ================================
+
+  An Ubuntu 26.04 nosi guest with one emulated NVMe device and no GPU.
+  Afterwards, run the other workflows with 'configs/qemu_guest.toml' as the
+  target config. Needs KVM, and cijoe 0.9.59 or later.
+
+    cijoe --monitor \
+      -c configs/qemu_guest.toml \
+      workflows/guest_start.yaml
+
+  The steps marked 'initiator' run where cijoe runs, the others in the guest.
+
+steps:
+- name: guest_kill
+  uses: qemu.guest_kill
+  with:
+    guest_name: "{{ config.qemu.default_guest }}"
+
+- name: guest_image
+  uses: system_imaging.diskimage_from_oras
+  with:
+    pattern: "{{ config.qemu.default_systemimage }}"
+
+- name: guest_initialize
+  uses: qemu.guest_initialize
+  with:
+    guest_name: "{{ config.qemu.default_guest }}"
+    system_image_name: "{{ config.qemu.default_systemimage }}"
+
+# A new, empty backing image for the NVMe namespace, on the initiator
+- name: nvme_image
+  run: |
+    qemu-img create -f raw {{ config.qemu.guests[config.qemu.default_guest].path }}/nvme0n1.img 8G
+  with:
+    transport: initiator
+
+- name: guest_start
+  uses: qemu.guest_start
+  with:
+    guest_name: "{{ config.qemu.default_guest }}"
+
+# The guest prints its login prompt before SSH is up
+- name: guest_ssh_wait
+  uses: core.wait_for_transport
+  with:
+    transport_name: odus
+    timeout: 300
+
+# nosi images lock root; open root SSH through the operator account
+- name: root_unlock
+  run: |
+    echo 'root:{{ config.cijoe.transport.root.password }}' | sudo chpasswd
+    printf 'PermitRootLogin yes\nPasswordAuthentication yes\n' | sudo tee /etc/ssh/sshd_config.d/00-ci-root.conf
+    sudo systemctl restart ssh
+  with:
+    transport: odus
+
+- name: root_ssh_wait
+  uses: core.wait_for_transport
+  with:
+    transport_name: root
+
+- name: guest_check
+  run: |
+    hostname
+    uname -a
+    df -h /
+    lspci | grep -i 'non-volatile'
