@@ -40,6 +40,9 @@ struct fil_opts {
 	bool buffered;        ///< Whether to use O_DIRECT with POSIX
 	bool register_bufs;   ///< Register cuFile device buffers with cuFileBufRegister
 	bool copy_to_gpu;     ///< aisio-cpu/posix: copy files host->device after read
+	uint32_t threads;     ///< Threads that read each batch between them; more than one
+			      ///< needs batch_size no larger than the dataset, and a process
+			      ///< forked after fil_init() can't use the iterator
 };
 
 /**
@@ -48,8 +51,10 @@ struct fil_opts {
 struct fil_stats {
 	uint64_t bytes;         ///< Total number of bytes read
 	uint64_t io;            ///< Total number of commands sent
-	double io_time;         ///< The total time spent doing IO
-	double prep_time;       /// The total time spent preparing for doing IO
+	double io_time;         ///< The total time spent doing IO; see prep_time
+	double prep_time;       ///< The total time spent preparing for doing IO. With threads,
+				///< each batch adds the prep and IO times of its slowest
+				///< thread; handing the batch to the threads is in neither
 	double prep_meta_time;  ///< GPU prep: outer-loop metadata lookups
 	double prep_cmds_time;  ///< GPU prep: inner cmd-building writes to pinned mem
 	double io_memcpy_time;  ///< GPU IO: cudaMemcpy H->D of cmds
@@ -82,6 +87,7 @@ struct fil_output {
  * gpu_nqueues = 1
  * queue_depth = 128
  * batch_size = 1
+ * threads = 1
  *
  * @returns Struct fil_opts with default settings
  */

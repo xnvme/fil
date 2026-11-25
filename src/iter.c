@@ -45,6 +45,20 @@
 #define UPCIE_HEAP_SIZE(buf_total) \
 	(((buf_total) + UPCIE_HEAP_OVERHEAD + UPCIE_HEAP_ALIGN - 1) & ~(UPCIE_HEAP_ALIGN - 1))
 
+static void
+_workers_stop(struct fil_iter *iter);
+
+static void
+_queues_term(struct fil_iter *iter)
+{
+	for (uint32_t t = 0; iter->workers && t < iter->n_workers; t++) {
+		if (iter->workers[t].queue) {
+			xnvme_queue_term(iter->workers[t].queue);
+			iter->workers[t].queue = NULL;
+		}
+	}
+}
+
 static int
 _xnvme_setup(struct fil_iter *iter, struct fil_dev *device, const char *uri)
 {
@@ -166,20 +180,31 @@ _xnvme_setup(struct fil_iter *iter, struct fil_dev *device, const char *uri)
 		}
 #endif
 	} else {
-		err = xnvme_queue_init(dev, iter->opts->queue_depth, 0, &device->queue);
-		if (err) {
-			xnvme_dev_close(dev);
-			fprintf(stderr, "xnvme_queue_init(): %d\n", err);
-			return err;
-		}
+		// A queue for each worker, so they submit without sharing one
+		for (uint32_t t = 0; t < iter->n_workers; t++) {
+			struct fil_worker *w = &iter->workers[t];
 
-		err = xnvme_queue_set_cb(device->queue, fil_io_cb, &device->io_errors);
-		if (err) {
-			fprintf(stderr, "xnvme_queue_set_cb(): %d\n", err);
-			xnvme_queue_term(device->queue);
-			device->queue = NULL;
-			xnvme_dev_close(dev);
-			return err;
+			err = xnvme_queue_init(dev, iter->opts->queue_depth, 0, &w->queue);
+			if (err) {
+				fprintf(stderr, "xnvme_queue_init(): %d\n", err);
+				if (iter->n_workers > 1) {
+					fprintf(stderr,
+						"Could not open queue %u of %u, one per thread; "
+						"homi limits the queues of a client\n",
+						t + 1, iter->n_workers);
+				}
+				_queues_term(iter);
+				xnvme_dev_close(dev);
+				return err;
+			}
+
+			err = xnvme_queue_set_cb(w->queue, fil_io_cb, &w->io_errors);
+			if (err) {
+				fprintf(stderr, "xnvme_queue_set_cb(): %d\n", err);
+				_queues_term(iter);
+				xnvme_dev_close(dev);
+				return err;
+			}
 		}
 	}
 
@@ -709,7 +734,6 @@ _alloc(struct fil_iter *iter, uint32_t n_buffers)
 	for (uint32_t i = 0; i < iter->n_devs; i++) {
 		struct fil_dev *device = iter->devs[i];
 		device->n_buffers = iter->output->n_buffers / iter->n_devs;
-		device->buf = 0;
 		device->buffers = malloc(sizeof(void *) * device->n_buffers);
 		if (!device->buffers) {
 			err = errno;
@@ -811,24 +835,7 @@ _alloc(struct fil_iter *iter, uint32_t n_buffers)
 			}
 		}
 
-		if (_reads_files(iter)) {
-			device->file_io = malloc(sizeof(struct fil_file_io));
-			if (!device->file_io) {
-				err = errno;
-				fprintf(stderr, "Could not allocate IO struct: %d\n", err);
-				return err;
-			}
-			device->file_io->buffer = NULL;
-			if (iter->opts->copy_to_gpu) {
-				device->file_io->buffer = malloc(iter->buffer_size);
-				if (!device->file_io->buffer) {
-					err = errno;
-					fprintf(stderr, "Could not allocate bounce buffer: %d\n",
-						err);
-					return err;
-				}
-			}
-		} else if (iter->type == FIL_GPU) {
+		if (iter->type == FIL_GPU) {
 #ifdef FIL_CUDA_ENABLED
 			uint32_t n_cmds =
 				(iter->buffer_size / iter->opts->iosize) * device->n_buffers;
@@ -888,6 +895,16 @@ _alloc(struct fil_iter *iter, uint32_t n_buffers)
 				device->gpu_io.prp1_base[j] = prp1;
 			}
 #endif
+		}
+	}
+
+	for (uint32_t t = 0; _reads_files(iter) && iter->opts->copy_to_gpu && t < iter->n_workers;
+	     t++) {
+		iter->workers[t].bounce = malloc(iter->buffer_size);
+		if (!iter->workers[t].bounce) {
+			err = errno;
+			fprintf(stderr, "Could not allocate bounce buffer: %d\n", err);
+			return err;
 		}
 	}
 
@@ -967,6 +984,15 @@ _alloc(struct fil_iter *iter, uint32_t n_buffers)
 void
 fil_term(struct fil_iter *iter)
 {
+	// The reader threads go first, as they use the queues and buffers freed below
+	_workers_stop(iter);
+#ifdef FIL_CUDA_ENABLED
+	for (uint32_t t = 0; iter->workers && t < iter->n_workers; t++) {
+		if (iter->workers[t].stream) {
+			cudaStreamDestroy(iter->workers[t].stream);
+		}
+	}
+#endif
 	FIL_TIME_FREE(iter);
 	for (uint32_t i = 0; i < iter->n_devs; i++) {
 		struct fil_dev *device = iter->devs[i];
@@ -991,7 +1017,7 @@ fil_term(struct fil_iter *iter)
 			for (uint32_t j = 0; j < device->n_buffers; j++) {
 				xnvme_buf_free(device->dev, device->buffers[j]);
 			}
-			xnvme_queue_term(device->queue);
+			_queues_term(iter);
 			break;
 		case FIL_CPU:
 			for (uint32_t j = 0; j < device->n_buffers; j++) {
@@ -1003,7 +1029,7 @@ fil_term(struct fil_iter *iter)
 #endif
 			}
 			free(device->gpu_buffers);
-			xnvme_queue_term(device->queue);
+			_queues_term(iter);
 			break;
 		case FIL_FILE:
 		case FIL_CUFILE:
@@ -1035,10 +1061,6 @@ fil_term(struct fil_iter *iter)
 			cuFileDriverClose();
 		}
 #endif
-		if (device->file_io) {
-			free(device->file_io->buffer);
-			free(device->file_io);
-		}
 		free(device->buffers);
 		_dataset_free(device);
 		free(device->data_dir);
@@ -1070,6 +1092,10 @@ fil_term(struct fil_iter *iter)
 		free(iter->output->buf_len);
 		free(iter->output);
 	}
+	for (uint32_t t = 0; iter->workers && t < iter->n_workers; t++) {
+		free(iter->workers[t].bounce);
+	}
+	free(iter->workers);
 	free(iter->stats);
 	free(iter);
 }
@@ -1087,6 +1113,308 @@ _init_stats(struct fil_stats **stats)
 	memset(_stats, 0, sizeof(struct fil_stats));
 	*stats = _stats;
 	return 0;
+}
+
+// Worker t reads the slots [t * batch_size / threads, (t + 1) * batch_size / threads)
+static int
+_workers_init(struct fil_iter *iter)
+{
+	uint32_t n = iter->opts->threads, batch_size = iter->opts->batch_size;
+
+	iter->workers = calloc(n, sizeof(*iter->workers));
+	if (!iter->workers) {
+		fprintf(stderr, "Could not allocate workers: %d\n", errno);
+		return errno;
+	}
+	iter->n_workers = n;
+
+	for (uint32_t t = 0; t < n; t++) {
+		struct fil_worker *w = &iter->workers[t];
+
+		w->iter = iter;
+		w->first = (uint64_t)t * batch_size / n;
+		w->n = (uint64_t)(t + 1) * batch_size / n - w->first;
+	}
+	return 0;
+}
+
+#ifdef FIL_CUDA_ENABLED
+// Whether the workers make CUDA calls, which need the context the reads were set up in
+static bool
+_workers_use_cuda(struct fil_iter *iter)
+{
+	return iter->type == FIL_CUFILE || iter->type == FIL_OPENDS || iter->opts->copy_to_gpu;
+}
+
+/**
+ * Make current on the worker's thread the context OpenDS and cuFile were opened in: a new
+ * thread has none until its first CUDA runtime call, and OpenDS fails a submit from a thread
+ * without it
+ */
+static int
+_worker_bind(struct fil_worker *w)
+{
+	CUresult rc;
+
+	if (!w->iter->cu_ctx) {
+		return 0;
+	}
+	rc = cuCtxSetCurrent(w->iter->cu_ctx);
+	if (rc != CUDA_SUCCESS) {
+		fprintf(stderr, "Could not make the CUDA context current: %d\n", rc);
+		return EIO;
+	}
+	return 0;
+}
+
+// Also give the worker the stream its copy_to_gpu copies go on
+static int
+_worker_setup(struct fil_worker *w)
+{
+	struct fil_iter *iter = w->iter;
+	int err;
+
+	err = _worker_bind(w);
+	if (err) {
+		return err;
+	}
+	if (iter->opts->copy_to_gpu) {
+		err = cudaStreamCreateWithFlags(&w->stream, cudaStreamNonBlocking);
+		if (err) {
+			fprintf(stderr, "Could not create a copy stream: %d\n", err);
+			return err;
+		}
+	}
+	return 0;
+}
+#else
+static int
+_worker_bind(struct fil_worker *FIL_UNUSED(w))
+{
+	return 0;
+}
+
+static int
+_worker_setup(struct fil_worker *FIL_UNUSED(w))
+{
+	return 0;
+}
+#endif
+
+// Reads its slots of each batch _run_workers hands out, until _workers_stop
+static void *
+_worker_main(void *arg)
+{
+	struct fil_worker *w = arg;
+	struct fil_pool *pool = &w->iter->pool;
+	uint64_t seen = 0;
+
+	w->init_err = _worker_setup(w);
+
+	pthread_mutex_lock(&pool->lock);
+	if (++pool->ready == w->iter->n_workers - 1) {
+		pthread_cond_signal(&pool->done);
+	}
+	for (;;) {
+		while (pool->gen == seen && !pool->stop) {
+			pthread_cond_wait(&pool->start, &pool->lock);
+		}
+		if (pool->stop) {
+			break;
+		}
+		seen = pool->gen;
+		pthread_mutex_unlock(&pool->lock);
+
+		w->err = w->iter->io_fn(w);
+
+		pthread_mutex_lock(&pool->lock);
+		if (--pool->pending == 0) {
+			pthread_cond_signal(&pool->done);
+		}
+	}
+	pthread_mutex_unlock(&pool->lock);
+	return NULL;
+}
+
+/**
+ * Start the threads of workers 1 and up, which last as long as the iterator, and wait for them
+ * to set up, so a failure fails fil_init(); worker 0 reads on the thread calling fil_next()
+ */
+static int
+_workers_start(struct fil_iter *iter)
+{
+	struct fil_pool *pool = &iter->pool;
+	int err;
+
+	iter->pid = getpid();
+#ifdef FIL_CUDA_ENABLED
+	// Worker 0 needs it too, as fil_next() can be called from another thread than this one
+	if (_workers_use_cuda(iter)) {
+		CUresult rc = cuCtxGetCurrent(&iter->cu_ctx);
+
+		if (rc != CUDA_SUCCESS) {
+			iter->cu_ctx = NULL;
+		}
+		if (!iter->cu_ctx && iter->n_workers > 1) {
+			fprintf(stderr, "No CUDA context to share with the reader threads: %d\n",
+				rc);
+			return EIO;
+		}
+	}
+#endif
+
+	err = _worker_setup(&iter->workers[0]);
+	if (err) {
+		return err;
+	}
+	if (iter->n_workers == 1) {
+		return 0;
+	}
+
+	err = pthread_mutex_init(&pool->lock, NULL);
+	if (err) {
+		return err;
+	}
+	err = pthread_cond_init(&pool->start, NULL);
+	if (err) {
+		pthread_mutex_destroy(&pool->lock);
+		return err;
+	}
+	err = pthread_cond_init(&pool->done, NULL);
+	if (err) {
+		pthread_cond_destroy(&pool->start);
+		pthread_mutex_destroy(&pool->lock);
+		return err;
+	}
+	pool->init = true;
+
+	for (uint32_t t = 1; t < iter->n_workers; t++) {
+		struct fil_worker *w = &iter->workers[t];
+
+		err = pthread_create(&w->thread, NULL, _worker_main, w);
+		if (err) {
+			fprintf(stderr, "Could not start a reader thread: %d\n", err);
+			return err;
+		}
+		w->running = true;
+	}
+
+	pthread_mutex_lock(&pool->lock);
+	while (pool->ready < iter->n_workers - 1) {
+		pthread_cond_wait(&pool->done, &pool->lock);
+	}
+	pthread_mutex_unlock(&pool->lock);
+
+	for (uint32_t t = 1; t < iter->n_workers; t++) {
+		if (iter->workers[t].init_err) {
+			fprintf(stderr, "Reader thread %u could not set up: %d\n", t,
+				iter->workers[t].init_err);
+			return iter->workers[t].init_err;
+		}
+	}
+	return 0;
+}
+
+static void
+_workers_stop(struct fil_iter *iter)
+{
+	struct fil_pool *pool = &iter->pool;
+
+	if (!pool->init) {
+		return;
+	}
+	pthread_mutex_lock(&pool->lock);
+	pool->stop = true;
+	pthread_cond_broadcast(&pool->start);
+	pthread_mutex_unlock(&pool->lock);
+
+	for (uint32_t t = 0; t < iter->n_workers; t++) {
+		if (iter->workers[t].running) {
+			pthread_join(iter->workers[t].thread, NULL);
+			iter->workers[t].running = false;
+		}
+	}
+	pthread_cond_destroy(&pool->done);
+	pthread_cond_destroy(&pool->start);
+	pthread_mutex_destroy(&pool->lock);
+	pool->init = false;
+}
+
+/**
+ * Read the batch at the current index, each worker its slots. The batch takes as long as its
+ * slowest worker, whose prep and IO times are the batch's; the time to hand the batch out and
+ * wait for the workers is in neither. A failure other than ESTALE wins over ESTALE.
+ */
+static int
+_run_workers(struct fil_iter *iter)
+{
+	struct fil_pool *pool = &iter->pool;
+	struct fil_worker *slowest = &iter->workers[0];
+	int err = 0;
+
+	// A fork copies only the thread that forked, so the child has no workers to wait for
+	if (iter->n_workers > 1 && getpid() != iter->pid) {
+		fprintf(stderr, "fil_next() in a process forked after fil_init() with threads; "
+				"call fil_init() in the child\n");
+		return ENOTSUP;
+	}
+	err = _worker_bind(&iter->workers[0]);
+	if (err) {
+		return err;
+	}
+
+	for (uint32_t t = 0; t < iter->n_workers; t++) {
+		struct fil_worker *w = &iter->workers[t];
+
+		memset(&w->stats, 0, sizeof(w->stats));
+		w->base = iter->data->index;
+		w->err = 0;
+	}
+
+	if (iter->n_workers > 1) {
+		pthread_mutex_lock(&pool->lock);
+		pool->pending = iter->n_workers - 1;
+		pool->gen++;
+		pthread_cond_broadcast(&pool->start);
+		pthread_mutex_unlock(&pool->lock);
+	}
+
+	iter->workers[0].err = iter->io_fn(&iter->workers[0]);
+
+	if (iter->n_workers > 1) {
+		pthread_mutex_lock(&pool->lock);
+		while (pool->pending) {
+			pthread_cond_wait(&pool->done, &pool->lock);
+		}
+		pthread_mutex_unlock(&pool->lock);
+	}
+
+	for (uint32_t t = 0; t < iter->n_workers; t++) {
+		struct fil_worker *w = &iter->workers[t];
+
+		if (w->err && (!err || err == ESTALE)) {
+			err = w->err;
+		}
+		if (w->stats.prep_time + w->stats.io_time >
+		    slowest->stats.prep_time + slowest->stats.io_time) {
+			slowest = w;
+		}
+	}
+	iter->stats->prep_time += slowest->stats.prep_time;
+	iter->stats->io_time += slowest->stats.io_time;
+
+	return err;
+}
+
+// Counts what the workers read, and moves past the batch
+static void
+_finish_batch(struct fil_iter *iter)
+{
+	for (uint32_t t = 0; t < iter->n_workers; t++) {
+		iter->stats->bytes += iter->workers[t].stats.bytes;
+		iter->stats->io += iter->workers[t].stats.io;
+	}
+	iter->data->index += iter->opts->batch_size;
 }
 
 static bool
@@ -1127,6 +1455,18 @@ fil_init(struct fil_iter **iter, char **dev_uris, uint32_t n_devs, struct fil_op
 
 	if (opts->xal_shm[0] == '\0' && _xal_shm_required(opts)) {
 		fprintf(stderr, "xal_shm is required for the aisio backends\n");
+		return EINVAL;
+	}
+
+	if (!opts->threads || opts->threads > opts->batch_size) {
+		fprintf(stderr, "threads (%u) must be between 1 and the batch size (%u)\n",
+			opts->threads, opts->batch_size);
+		return EINVAL;
+	}
+
+	// The GPU queues read the batch between them
+	if (opts->threads > 1 && strcmp(opts->backend, "aisio-gpu") == 0) {
+		fprintf(stderr, "aisio-gpu reads with one thread\n");
 		return EINVAL;
 	}
 
@@ -1200,6 +1540,12 @@ fil_init(struct fil_iter **iter, char **dev_uris, uint32_t n_devs, struct fil_op
 		return err;
 	}
 
+	err = _workers_init(_iter);
+	if (err) {
+		fil_term(_iter);
+		return err;
+	}
+
 	// The largest file sizes the buffers, and with them the heap the device is opened with
 	for (uint32_t i = 0; i < n_devs; i++) {
 		struct fil_dev *device = malloc(sizeof(struct fil_dev));
@@ -1223,6 +1569,14 @@ fil_init(struct fil_iter **iter, char **dev_uris, uint32_t n_devs, struct fil_op
 		_iter->n_devs++;
 	}
 	_iter->stats->avg_file_size /= _iter->stats->n_files;
+
+	// A file twice in a batch would have two threads update its cached lookup at once
+	if (opts->threads > 1 && opts->batch_size > _iter->devs[0]->n_files) {
+		fprintf(stderr, "With threads, the batch size (%u) can't exceed the files (%lu)\n",
+			opts->batch_size, _iter->devs[0]->n_files);
+		fil_term(_iter);
+		return EINVAL;
+	}
 
 	for (uint32_t i = 0; i < n_devs; i++) {
 		err = _xnvme_setup(_iter, _iter->devs[i], dev_uris[i]);
@@ -1286,6 +1640,12 @@ fil_init(struct fil_iter **iter, char **dev_uris, uint32_t n_devs, struct fil_op
 
 	FIL_SHUFFLE(_iter->data->order, uint64_t, _iter->data->n_entries, uint64_t);
 
+	err = _workers_start(_iter);
+	if (err) {
+		fil_term(_iter);
+		return err;
+	}
+
 	(*iter) = _iter;
 
 	return 0;
@@ -1296,13 +1656,7 @@ fil_init(struct fil_iter **iter, char **dev_uris, uint32_t n_devs, struct fil_op
 static int
 _read_batch(struct fil_iter *iter)
 {
-	uint64_t index = iter->data->index, bytes = iter->stats->bytes, io = iter->stats->io;
-	uint64_t bufs[iter->n_devs];
 	int err;
-
-	for (uint32_t i = 0; i < iter->n_devs; i++) {
-		bufs[i] = iter->devs[i]->buf;
-	}
 
 	for (uint32_t attempt = 0; attempt < FIL_READ_ATTEMPTS; attempt++) {
 		bool current = true;
@@ -1314,7 +1668,7 @@ _read_batch(struct fil_iter *iter)
 			}
 		}
 
-		err = iter->io_fn(iter);
+		err = _run_workers(iter);
 		if (err && err != ESTALE) {
 			return err;
 		}
@@ -1324,13 +1678,6 @@ _read_batch(struct fil_iter *iter)
 		}
 		if (!err && current) {
 			return 0;
-		}
-
-		iter->data->index = index;
-		iter->stats->bytes = bytes;
-		iter->stats->io = io;
-		for (uint32_t i = 0; i < iter->n_devs; i++) {
-			iter->devs[i]->buf = bufs[i];
 		}
 	}
 
@@ -1348,11 +1695,12 @@ fil_next(struct fil_iter *iter, struct fil_output **output)
 		FIL_SHUFFLE(iter->data->order, uint64_t, iter->data->n_entries, uint64_t);
 	}
 
-	err = _reads_files(iter) ? iter->io_fn(iter) : _read_batch(iter);
+	err = _reads_files(iter) ? _run_workers(iter) : _read_batch(iter);
 	if (err) {
 		fprintf(stderr, "Data reading failed, err: %d\n", err);
 		return err;
 	}
+	_finish_batch(iter);
 
 	*output = iter->output;
 
@@ -1371,6 +1719,7 @@ fil_opts_default()
 				.gpu_nqueues = 1,
 				.queue_depth = 128,
 				.batch_size = 1,
+				.threads = 1,
 				.buffered = false,
 				.register_bufs = false,
 				.copy_to_gpu = false};

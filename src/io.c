@@ -86,36 +86,38 @@ _submit_run(struct xnvme_queue *queue, uint32_t nsid, uint64_t slba, uint64_t nb
 	return 0;
 }
 
+/** The file read into slot 'i' of the batch; fil reads from one device, into its buffer 'i' */
 static struct fil_file *
-fil_next_file(struct fil_iter *iter, struct fil_dev *device, uint32_t dev_id, uint32_t buf_id)
+fil_slot_file(struct fil_worker *w, uint32_t i)
 {
-	uint64_t pos = iter->data->order[iter->data->index++ % iter->data->n_entries];
+	struct fil_iter *iter = w->iter;
+	struct fil_dev *device = iter->devs[0];
+	uint64_t pos = iter->data->order[(w->base + i) % iter->data->n_entries];
 
-	iter->output->labels[buf_id + dev_id * device->n_buffers] = device->files[pos].label;
+	iter->output->labels[i] = device->files[pos].label;
 
 	return &device->files[pos];
 }
 
 static void
-fil_count_file(struct fil_iter *iter, struct fil_dev *device, uint32_t dev_id, uint32_t buf_id,
-	       uint64_t nbytes)
+fil_count_file(struct fil_worker *w, uint32_t i, uint64_t nbytes)
 {
-	iter->output->buf_len[buf_id + dev_id * device->n_buffers] = nbytes;
-	iter->stats->bytes += nbytes;
+	w->iter->output->buf_len[i] = nbytes;
+	w->stats.bytes += nbytes;
 }
 
 static int
-fil_next_inode(struct fil_iter *iter, struct fil_dev *device, uint32_t dev_id, uint32_t buf_id,
-	       struct xal_inode **inode)
+fil_slot_inode(struct fil_worker *w, uint32_t i, struct xal_inode **inode)
 {
-	struct fil_file *file = fil_next_file(iter, device, dev_id, buf_id);
+	struct fil_iter *iter = w->iter;
+	struct fil_file *file = fil_slot_file(w, i);
 	int err;
 
-	err = fil_file_inode(iter, device, file, inode);
+	err = fil_file_inode(iter, iter->devs[0], file, inode);
 	if (err) {
 		return err;
 	}
-	fil_count_file(iter, device, dev_id, buf_id, (*inode)->size);
+	fil_count_file(w, i, (*inode)->size);
 
 	return 0;
 }
@@ -133,30 +135,31 @@ fil_extent_slba(struct fil_dev *device, const struct xal_extent *extent, uint64_
  * this unconditionally.
  */
 static int
-_flush_run(struct fil_iter *iter, struct fil_dev *device, uint32_t nsid, uint64_t slba,
-	   uint64_t run, uint32_t io_nblocks, uint64_t blocksize, void **dbuf)
+_flush_run(struct fil_worker *w, uint32_t nsid, uint64_t slba, uint64_t run, uint32_t io_nblocks,
+	   uint64_t blocksize, void **dbuf)
 {
 	int err;
 
 	if (!run) {
 		return 0;
 	}
-	err = _submit_run(device->queue, nsid, slba, run, io_nblocks, blocksize, dbuf);
+	err = _submit_run(w->queue, nsid, slba, run, io_nblocks, blocksize, dbuf);
 	if (err) {
 		return err;
 	}
-	iter->stats->io += (run + io_nblocks - 1) / io_nblocks;
+	w->stats.io += (run + io_nblocks - 1) / io_nblocks;
 	return 0;
 }
 
 /**
- * Submit all of a device's per-buffer reads, coalescing physically-adjacent
- * extents into runs. Always drains the queue before returning -- including on
- * the error path -- so no outstanding command is left referencing a buffer.
+ * Submit the worker's reads, coalescing physically-adjacent extents into runs.
+ * Always drains the queue before returning -- including on the error path -- so
+ * no outstanding command is left referencing a buffer.
  */
 static int
-_submit_device(struct fil_iter *iter, struct fil_dev *device, uint32_t dev_id)
+_submit_device(struct fil_worker *w, struct fil_dev *device)
 {
+	struct fil_iter *iter = w->iter;
 	uint64_t blocksize = xnvme_dev_get_geo(device->dev)->lba_nbytes;
 	uint32_t xal_blksize = xal_get_sb_blocksize(device->xal);
 	uint32_t nsid = xnvme_dev_get_nsid(device->dev);
@@ -170,12 +173,12 @@ _submit_device(struct fil_iter *iter, struct fil_dev *device, uint32_t dev_id)
 	}
 	io_nblocks = iter->opts->iosize / blocksize;
 
-	for (uint32_t j = 0; j < device->n_buffers; j++) {
-		void *dbuf = device->buffers[j];
+	for (uint32_t i = w->first; i < w->first + w->n; i++) {
+		void *dbuf = device->buffers[i];
 		uint64_t slba = 0, run = 0;
 		struct xal_inode *file;
 
-		err = fil_next_inode(iter, device, dev_id, j, &file);
+		err = fil_slot_inode(w, i, &file);
 		if (err) {
 			goto drain;
 		}
@@ -199,88 +202,93 @@ _submit_device(struct fil_iter *iter, struct fil_dev *device, uint32_t dev_id)
 				run += ext_blocks;
 				continue;
 			}
-			err = _flush_run(iter, device, nsid, slba, run, io_nblocks, blocksize,
-					 &dbuf);
+			err = _flush_run(w, nsid, slba, run, io_nblocks, blocksize, &dbuf);
 			if (err) {
 				goto drain;
 			}
 			slba = ext_slba;
 			run = ext_blocks;
 		}
-		err = _flush_run(iter, device, nsid, slba, run, io_nblocks, blocksize, &dbuf);
+		err = _flush_run(w, nsid, slba, run, io_nblocks, blocksize, &dbuf);
 		if (err) {
 			goto drain;
 		}
 	}
 
 drain:
-	xnvme_queue_drain(device->queue);
+	xnvme_queue_drain(w->queue);
 	return err;
 }
 
 #ifdef FIL_CUDA_ENABLED
+/**
+ * Copy the worker's buffers to the GPU on its own stream; the default stream is shared by all
+ * threads and would take the workers' copies one at a time. Waits for the copies even when one
+ * fails, as the next batch reads into the same buffers.
+ */
 static int
-_copy_buffers_to_gpu(struct fil_iter *iter, struct fil_dev *device, uint32_t dev_id)
+_copy_buffers_to_gpu(struct fil_worker *w, struct fil_dev *device)
 {
-	uint32_t slot;
-	int err;
+	struct fil_iter *iter = w->iter;
+	int err = 0, serr;
 
-	for (uint32_t i = 0; i < device->n_buffers; i++) {
-		slot = i + dev_id * device->n_buffers;
-		err = cudaMemcpy(device->gpu_buffers[i], device->buffers[i],
-				 iter->output->buf_len[slot], cudaMemcpyHostToDevice);
+	for (uint32_t i = w->first; i < w->first + w->n; i++) {
+		err = cudaMemcpyAsync(device->gpu_buffers[i], device->buffers[i],
+				      iter->output->buf_len[i], cudaMemcpyHostToDevice, w->stream);
 		if (err) {
 			fprintf(stderr, "Could not copy data to GPU memory, err: %d\n", err);
-			return err;
+			break;
 		}
 	}
-	return 0;
+	serr = cudaStreamSynchronize(w->stream);
+	if (serr) {
+		fprintf(stderr, "Could not synchronize the copy stream, err: %d\n", serr);
+	}
+	return err ? err : serr;
 }
 #endif
 
+// fil reads from one device, whose queue the worker holds
 int
-fil_cpu_submit(struct fil_iter *iter)
+fil_cpu_submit(struct fil_worker *w)
 {
+	struct fil_dev *device = w->iter->devs[0];
 	struct timespec start, end;
 	int err;
 
-	for (uint32_t i = 0; i < iter->n_devs; i++) {
-		struct fil_dev *device = iter->devs[i];
+	w->io_errors = 0;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &start);
 
-		device->io_errors = 0;
-		clock_gettime(CLOCK_MONOTONIC_RAW, &start);
-
-		err = _submit_device(iter, device, i);
+	err = _submit_device(w, device);
 #ifdef FIL_CUDA_ENABLED
-		if (!err && iter->opts->copy_to_gpu) {
-			err = _copy_buffers_to_gpu(iter, device, i);
-		}
+	if (!err && w->iter->opts->copy_to_gpu) {
+		err = _copy_buffers_to_gpu(w, device);
+	}
 #endif
 
-		clock_gettime(CLOCK_MONOTONIC_RAW, &end);
-		iter->stats->io_time += ELAPSED(start, end);
-		if (err) {
-			return err;
-		}
-		if (device->io_errors) {
-			fprintf(stderr, "IO failed: %u\n", device->io_errors);
-			return -EIO;
-		}
+	clock_gettime(CLOCK_MONOTONIC_RAW, &end);
+	w->stats.io_time += ELAPSED(start, end);
+	if (err) {
+		return err;
+	}
+	if (w->io_errors) {
+		fprintf(stderr, "IO failed: %u\n", w->io_errors);
+		return -EIO;
 	}
 	return 0;
 }
 
 #ifdef FIL_CUDA_ENABLED
 int
-fil_gpu_submit(struct fil_iter *iter)
+fil_gpu_submit(struct fil_worker *w)
 {
+	struct fil_iter *iter = w->iter;
 	struct xal_inode *file;
 	struct xal_extent extent;
 	struct timespec start, end;
 	struct fil_dev *device;
 	union xnvme_spec_sqe *cmd;
 	uint64_t nblocks, nbytes, slba, offset;
-	uint32_t dev_id, buf_id;
 	int err;
 
 	uint64_t max_ios_per_buf = iter->buffer_size / iter->opts->iosize;
@@ -303,13 +311,12 @@ fil_gpu_submit(struct fil_iter *iter)
 
 	clock_gettime(CLOCK_MONOTONIC_RAW, &start);
 	FIL_TIME_BEGIN(iter);
-	for (uint32_t i = 0; i < iter->opts->batch_size; i++) {
-		dev_id = i % iter->n_devs;
-		device = iter->devs[dev_id];
-		buf_id = device->buf++ % device->n_buffers;
+	// fil reads from one device
+	device = iter->devs[0];
+	for (uint32_t i = w->first; i < w->first + w->n; i++) {
 		offset = 0;
 
-		err = fil_next_inode(iter, device, dev_id, buf_id, &file);
+		err = fil_slot_inode(w, i, &file);
 		if (err) {
 			return err;
 		}
@@ -323,11 +330,11 @@ fil_gpu_submit(struct fil_iter *iter)
 				return ESTALE;
 			}
 			extent = *at;
-			slba = fil_extent_slba(device, &extent, blocksizes[dev_id]);
-			nbytes = extent.nblocks * xal_blksizes[dev_id];
-			nblocks = nbytes / blocksizes[dev_id];
+			slba = fil_extent_slba(device, &extent, blocksizes[0]);
+			nbytes = extent.nblocks * xal_blksizes[0];
+			nblocks = nbytes / blocksizes[0];
 
-			for (uint64_t k = 0; k < nblocks / (nlbs[dev_id] + 1); k++) {
+			for (uint64_t k = 0; k < nblocks / (nlbs[0] + 1); k++) {
 				cmd = &device->gpu_io.cmds_host[device->gpu_io.n_io];
 
 				if (offset >= max_ios_per_buf) {
@@ -337,10 +344,10 @@ fil_gpu_submit(struct fil_iter *iter)
 					return EINVAL;
 				}
 
-				cmd->nvm.slba = slba + k * (nlbs[dev_id] + 1);
-				cmd->nvm.nlb = nlbs[dev_id];
-				cmd->common.dptr.prp.prp1 = device->gpu_io.prp1_base[buf_id] +
-							    offset * iter->opts->iosize;
+				cmd->nvm.slba = slba + k * (nlbs[0] + 1);
+				cmd->nvm.nlb = nlbs[0];
+				cmd->common.dptr.prp.prp1 =
+					device->gpu_io.prp1_base[i] + offset * iter->opts->iosize;
 				device->gpu_io.n_io++;
 				offset++;
 			}
@@ -348,10 +355,10 @@ fil_gpu_submit(struct fil_iter *iter)
 		FIL_TIME_TICK(iter, prep_cmds_time);
 	}
 	clock_gettime(CLOCK_MONOTONIC_RAW, &end);
-	iter->stats->prep_time += ELAPSED(start, end);
+	w->stats.prep_time += ELAPSED(start, end);
 
 	for (uint32_t i = 0; i < iter->n_devs; i++) {
-		iter->stats->io += iter->devs[i]->gpu_io.n_io;
+		w->stats.io += iter->devs[i]->gpu_io.n_io;
 	}
 
 	clock_gettime(CLOCK_MONOTONIC_RAW, &start);
@@ -391,12 +398,12 @@ fil_gpu_submit(struct fil_iter *iter)
 	FIL_TIME_TICK(iter, io_sync_time);
 	FIL_TIME_KERNEL_ELAPSED(iter);
 	clock_gettime(CLOCK_MONOTONIC_RAW, &end);
-	iter->stats->io_time += ELAPSED(start, end);
+	w->stats.io_time += ELAPSED(start, end);
 	return 0;
 }
 #else
 int
-fil_gpu_submit(struct fil_iter *FIL_UNUSED(iter))
+fil_gpu_submit(struct fil_worker *FIL_UNUSED(w))
 {
 	return ENOTSUP;
 }
@@ -404,14 +411,16 @@ fil_gpu_submit(struct fil_iter *FIL_UNUSED(iter))
 
 // Records the size the file has now, not the one it was listed with
 static int
-fil_open_file(struct fil_iter *iter, struct fil_dev *device, uint32_t dev_id, uint32_t buf_id,
-	      struct fil_file *file, int flags, int *fd, uint64_t *size)
+fil_open_file(struct fil_worker *w, uint32_t i, struct fil_file *file, int flags, int *fd,
+	      uint64_t *size)
 {
-	char *path = device->file_io->path;
+	struct fil_iter *iter = w->iter;
+	struct fil_dev *device = iter->devs[0];
+	char *path = w->path;
 	struct stat st;
 	int err;
 
-	err = fil_file_path(device, file, path, sizeof(device->file_io->path));
+	err = fil_file_path(device, file, path, sizeof(w->path));
 	if (err) {
 		return err;
 	}
@@ -436,28 +445,24 @@ fil_open_file(struct fil_iter *iter, struct fil_dev *device, uint32_t dev_id, ui
 	}
 
 	*size = st.st_size;
-	fil_count_file(iter, device, dev_id, buf_id, *size);
+	fil_count_file(w, i, *size);
 	return 0;
 }
 
-/** Open the next file for read 'i' of the batch, and hand out the buffer it goes in */
+/** Open the file for slot 'i' of the batch, and hand out the buffer it goes in */
 int
-fil_open_next(struct fil_iter *iter, uint32_t i, int flags, void **buffer, int *fd, uint64_t *size)
+fil_open_next(struct fil_worker *w, uint32_t i, int flags, void **buffer, int *fd, uint64_t *size)
 {
-	uint32_t dev_id = i % iter->n_devs;
-	struct fil_dev *device = iter->devs[dev_id];
-	uint32_t buf_id = device->buf++ % device->n_buffers;
-	struct fil_file *file = fil_next_file(iter, device, dev_id, buf_id);
+	*buffer = w->iter->devs[0]->buffers[i];
+	w->stats.io++;
 
-	*buffer = device->buffers[buf_id];
-	iter->stats->io++;
-
-	return fil_open_file(iter, device, dev_id, buf_id, file, flags, fd, size);
+	return fil_open_file(w, i, fil_slot_file(w, i), flags, fd, size);
 }
 
 int
-fil_file_submit(struct fil_iter *iter)
+fil_file_submit(struct fil_worker *w)
 {
+	struct fil_iter *iter = w->iter;
 	struct timespec start, end;
 #ifdef FIL_CUDA_ENABLED
 	CUfileError_t status;
@@ -473,21 +478,21 @@ fil_file_submit(struct fil_iter *iter)
 	ssize_t err, bytes_read;
 	bool is_cufile = iter->type == FIL_CUFILE;
 	bool is_opends = iter->type == FIL_OPENDS;
+	struct fil_dev *device = iter->devs[0];
 	flags = O_RDONLY;
 	if (is_cufile || !iter->opts->buffered) {
 		flags |= O_DIRECT;
 	}
 
-	for (uint32_t i = 0; i < iter->opts->batch_size; i++) {
+	for (uint32_t i = w->first; i < w->first + w->n; i++) {
 		clock_gettime(CLOCK_MONOTONIC_RAW, &start);
-		struct fil_dev *device = iter->devs[i % iter->n_devs];
 
-		err = fil_open_next(iter, i, flags, &buffer, &fd, &size);
+		err = fil_open_next(w, i, flags, &buffer, &fd, &size);
 		if (err) {
 			return err;
 		}
-		path = device->file_io->path;
-		dst = iter->opts->copy_to_gpu ? device->file_io->buffer : buffer;
+		path = w->path;
+		dst = iter->opts->copy_to_gpu ? w->bounce : buffer;
 		blksize = device->fs_blksize;
 
 		nbytes = size;
@@ -517,7 +522,7 @@ fil_file_submit(struct fil_iter *iter)
 #endif
 
 		clock_gettime(CLOCK_MONOTONIC_RAW, &end);
-		iter->stats->prep_time += ELAPSED(start, end);
+		w->stats.prep_time += ELAPSED(start, end);
 
 		clock_gettime(CLOCK_MONOTONIC_RAW, &start);
 		bytes_read = 0;
@@ -525,23 +530,25 @@ fil_file_submit(struct fil_iter *iter)
 		if (is_cufile) {
 
 			bytes_read = cuFileRead(fh, buffer, nbytes, 0, 0);
+			cuFileHandleDeregister(fh);
 			if (bytes_read < 0) {
 				err = bytes_read;
 				fprintf(stderr, "Could not read %s, err: %ld\n", path, err);
-				return err;
+				goto err_close;
 			}
 			if ((uint64_t)bytes_read != nbytes) {
 				fprintf(stderr,
 					"Could not read entire file %s, expected: %lu, actual: "
 					"%ld\n",
 					path, size, bytes_read);
-				return EIO;
+				err = EIO;
+				goto err_close;
 			}
-			cuFileHandleDeregister(fh);
 		} else if (is_opends) {
+			// Releases the handle, whether or not the read failed
 			err = fil_opends_file_read(dfh, buffer, nbytes, path);
 			if (err) {
-				return err;
+				goto err_close;
 			}
 		} else
 #endif
@@ -552,41 +559,54 @@ fil_file_submit(struct fil_iter *iter)
 					err = errno;
 					fprintf(stderr, "Could not read %s, err: %ld\n", path,
 						err);
-					return err;
+					goto err_close;
 				}
 				if (err == 0) {
 					fprintf(stderr,
 						"Could not read entire file %s, expected: %lu, "
 						"actual: %ld\n",
 						path, size, bytes_read);
-					return EIO;
+					err = EIO;
+					goto err_close;
 				}
 				bytes_read += err;
 			} while ((uint64_t)bytes_read != size);
 
 #ifdef FIL_CUDA_ENABLED
+			// On the worker's stream, as the default one would take the workers'
+			// copies one at a time
 			if (iter->opts->copy_to_gpu) {
-				err = cudaMemcpy(buffer, dst, size, cudaMemcpyHostToDevice);
+				err = cudaMemcpyAsync(buffer, dst, size, cudaMemcpyHostToDevice,
+						      w->stream);
+				if (!err) {
+					err = cudaStreamSynchronize(w->stream);
+				}
 				if (err) {
 					fprintf(stderr,
 						"Could not copy data to GPU memory, err: %ld\n",
 						err);
-					return err;
+					goto err_close;
 				}
 			}
 #endif
 		}
 		clock_gettime(CLOCK_MONOTONIC_RAW, &end);
-		iter->stats->io_time += ELAPSED(start, end);
+		w->stats.io_time += ELAPSED(start, end);
 		close(fd);
 	}
 	return 0;
+
+err_close:
+	close(fd);
+	return err;
 }
 
 #ifdef FIL_CUDA_ENABLED
 int
-fil_cufile_stream_submit(struct fil_iter *iter)
+fil_cufile_stream_submit(struct fil_worker *w)
 {
+	struct fil_iter *iter = w->iter;
+	uint32_t end_slot = w->first + w->n, nreg = w->first;
 	struct timespec start, end;
 	struct fil_cufile_io *cufile_io;
 	CUfileError_t status;
@@ -597,10 +617,10 @@ fil_cufile_stream_submit(struct fil_iter *iter)
 
 	cufile_io = iter->cufile_io;
 	clock_gettime(CLOCK_MONOTONIC_RAW, &start);
-	for (uint32_t i = 0; i < iter->opts->batch_size; i++) {
-		err = fil_open_next(iter, i, O_RDONLY | O_DIRECT, &buffer, &fd, &size);
+	for (uint32_t i = w->first; i < end_slot; i++) {
+		err = fil_open_next(w, i, O_RDONLY | O_DIRECT, &buffer, &fd, &size);
 		if (err) {
-			return err;
+			goto teardown;
 		}
 
 		memset(&cufile_io->descr[i], 0, sizeof(CUfileDescr_t));
@@ -610,8 +630,10 @@ fil_cufile_stream_submit(struct fil_iter *iter)
 		if (status.err != CU_FILE_SUCCESS) {
 			fprintf(stderr, "Could not register file, err: %d\n", status.err);
 			close(fd);
-			return status.err;
+			err = status.err;
+			goto teardown;
 		}
+		nreg = i + 1;
 		cufile_io->expected[i] = size;
 		cufile_io->actual[i] = 0;
 
@@ -626,10 +648,10 @@ fil_cufile_stream_submit(struct fil_iter *iter)
 	}
 
 	clock_gettime(CLOCK_MONOTONIC_RAW, &end);
-	iter->stats->prep_time += ELAPSED(start, end);
+	w->stats.prep_time += ELAPSED(start, end);
 
 	clock_gettime(CLOCK_MONOTONIC_RAW, &start);
-	for (uint32_t i = 0; i < iter->opts->batch_size; i++) {
+	for (uint32_t i = w->first; i < end_slot; i++) {
 		err = cudaStreamSynchronize(cufile_io->streams[i]);
 		if (err) {
 			fprintf(stderr, "Could not synchronize CUDA Stream, err: %d\n", err);
@@ -648,10 +670,15 @@ fil_cufile_stream_submit(struct fil_iter *iter)
 		}
 	}
 	clock_gettime(CLOCK_MONOTONIC_RAW, &end);
-	iter->stats->io_time += ELAPSED(start, end);
+	w->stats.io_time += ELAPSED(start, end);
 
 teardown:
-	for (uint32_t i = 0; i < iter->opts->batch_size; i++) {
+	/* A failure can leave reads queued, and a handle with I/O in flight on it must not
+	 * be deregistered. */
+	for (uint32_t i = w->first; err && i < nreg; i++) {
+		cudaStreamSynchronize(cufile_io->streams[i]);
+	}
+	for (uint32_t i = w->first; i < nreg; i++) {
 		fd = cufile_io->descr[i].handle.fd;
 		cuFileHandleDeregister(cufile_io->handle[i]);
 		close(fd);
@@ -660,7 +687,7 @@ teardown:
 }
 #else
 int
-fil_cufile_stream_submit(struct fil_iter *FIL_UNUSED(iter))
+fil_cufile_stream_submit(struct fil_worker *FIL_UNUSED(w))
 {
 	return ENOTSUP;
 }

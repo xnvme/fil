@@ -216,15 +216,15 @@ fil_opends_file_read(void *fh, void *buf, size_t nbytes, const char *path)
 	return err;
 }
 
-/* Opens the next file for read 'i' and registers it. */
+/* Opens the file for slot 'i' and registers it. */
 static int
-_prep_read(struct fil_iter *iter, uint32_t i, void **buffer)
+_prep_read(struct fil_worker *w, uint32_t i, void **buffer)
 {
-	struct fil_opends_io *io = iter->opends_io;
+	struct fil_opends_io *io = w->iter->opends_io;
 	uint64_t size;
 	int err;
 
-	err = fil_open_next(iter, i, O_RDONLY | O_DIRECT, buffer, &io->fds[i], &size);
+	err = fil_open_next(w, i, O_RDONLY | O_DIRECT, buffer, &io->fds[i], &size);
 	if (err) {
 		return err;
 	}
@@ -242,28 +242,28 @@ _prep_read(struct fil_iter *iter, uint32_t i, void **buffer)
 }
 
 static void
-_release_reads(struct fil_opends_io *io, uint32_t n)
+_release_reads(struct fil_opends_io *io, uint32_t first, uint32_t end)
 {
-	for (uint32_t i = 0; i < n; i++) {
+	for (uint32_t i = first; i < end; i++) {
 		opends_handle_deregister(io->handles[i]);
 		close(io->fds[i]);
 	}
 }
 
 int
-fil_opends_stream_submit(struct fil_iter *iter)
+fil_opends_stream_submit(struct fil_worker *w)
 {
-	struct fil_opends_io *io = iter->opends_io;
+	struct fil_opends_io *io = w->iter->opends_io;
+	uint32_t end_slot = w->first + w->n, nreg = w->first;
 	struct timespec start, end;
 	opends_error_t derr;
-	uint32_t nreg = 0;
 	off_t offset = 0;
 	void *buffer;
 	int err = 0;
 
 	clock_gettime(CLOCK_MONOTONIC_RAW, &start);
-	for (uint32_t i = 0; i < iter->opts->batch_size; i++) {
-		err = _prep_read(iter, i, &buffer);
+	for (uint32_t i = w->first; i < end_slot; i++) {
+		err = _prep_read(w, i, &buffer);
 		if (err) {
 			goto teardown;
 		}
@@ -279,10 +279,10 @@ fil_opends_stream_submit(struct fil_iter *iter)
 		}
 	}
 	clock_gettime(CLOCK_MONOTONIC_RAW, &end);
-	iter->stats->prep_time += ELAPSED(start, end);
+	w->stats.prep_time += ELAPSED(start, end);
 
 	clock_gettime(CLOCK_MONOTONIC_RAW, &start);
-	for (uint32_t i = 0; i < iter->opts->batch_size; i++) {
+	for (uint32_t i = w->first; i < end_slot; i++) {
 		err = cudaStreamSynchronize(io->streams[i]);
 		if (err) {
 			fprintf(stderr, "Could not synchronize CUDA Stream, err: %d\n", err);
@@ -294,31 +294,31 @@ fil_opends_stream_submit(struct fil_iter *iter)
 		}
 	}
 	clock_gettime(CLOCK_MONOTONIC_RAW, &end);
-	iter->stats->io_time += ELAPSED(start, end);
+	w->stats.io_time += ELAPSED(start, end);
 
 teardown:
 	/* A failure can leave reads queued, and a handle with I/O in flight on it must not
 	 * be deregistered. */
-	for (uint32_t i = 0; err && i < nreg; i++) {
+	for (uint32_t i = w->first; err && i < nreg; i++) {
 		cudaStreamSynchronize(io->streams[i]);
 	}
-	_release_reads(io, nreg);
+	_release_reads(io, w->first, nreg);
 	return err;
 }
 
 int
-fil_opends_async_submit(struct fil_iter *iter)
+fil_opends_async_submit(struct fil_worker *w)
 {
-	struct fil_opends_io *io = iter->opends_io;
+	struct fil_opends_io *io = w->iter->opends_io;
+	uint32_t end_slot = w->first + w->n, nreg = w->first, nsub = w->first;
 	struct timespec start, end;
 	opends_error_t derr;
-	uint32_t nreg = 0, nsub = 0;
 	void *buffer;
 	int err = 0;
 
 	clock_gettime(CLOCK_MONOTONIC_RAW, &start);
-	for (uint32_t i = 0; i < iter->opts->batch_size; i++) {
-		err = _prep_read(iter, i, &buffer);
+	for (uint32_t i = w->first; i < end_slot; i++) {
+		err = _prep_read(w, i, &buffer);
 		if (err) {
 			break;
 		}
@@ -335,10 +335,10 @@ fil_opends_async_submit(struct fil_iter *iter)
 		nsub = i + 1;
 	}
 	clock_gettime(CLOCK_MONOTONIC_RAW, &end);
-	iter->stats->prep_time += ELAPSED(start, end);
+	w->stats.prep_time += ELAPSED(start, end);
 
 	clock_gettime(CLOCK_MONOTONIC_RAW, &start);
-	for (uint32_t i = 0; i < nsub; i++) {
+	for (uint32_t i = w->first; i < nsub; i++) {
 		int failed = _check_read(opends_async_await(&io->futures[i]), io->expected[i]);
 
 		if (failed) {
@@ -346,11 +346,11 @@ fil_opends_async_submit(struct fil_iter *iter)
 		}
 	}
 	clock_gettime(CLOCK_MONOTONIC_RAW, &end);
-	iter->stats->io_time += ELAPSED(start, end);
+	w->stats.io_time += ELAPSED(start, end);
 
 	/* Deregister only after the await loop: a handle with I/O in flight on it
 	 * must not be deregistered. */
-	_release_reads(io, nreg);
+	_release_reads(io, w->first, nreg);
 	return err;
 }
 
@@ -399,13 +399,13 @@ fil_opends_file_read(void *FIL_UNUSED(fh), void *FIL_UNUSED(buf), size_t FIL_UNU
 }
 
 int
-fil_opends_stream_submit(struct fil_iter *FIL_UNUSED(iter))
+fil_opends_stream_submit(struct fil_worker *FIL_UNUSED(w))
 {
 	return ENOSYS;
 }
 
 int
-fil_opends_async_submit(struct fil_iter *FIL_UNUSED(iter))
+fil_opends_async_submit(struct fil_worker *FIL_UNUSED(w))
 {
 	return ENOSYS;
 }

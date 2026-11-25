@@ -14,6 +14,7 @@ pkg = import('pkgconfig')
 cc = meson.get_compiler('c')
 
 rt_dep = cc.find_library('rt', required: true)
+threads_dep = dependency('threads')
 if not cc.has_function('clock_gettime', prefix: '#include <time.h>', dependencies: rt_dep)
   error('clock_gettime not found')
 endif
@@ -61,6 +62,7 @@ endif
 
 fil_deps = [
   rt_dep,
+  threads_dep,
   xnvme_dep,
   xal_dep,
 ]

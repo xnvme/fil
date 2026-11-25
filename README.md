@@ -105,6 +105,7 @@ filperf [<device-uri>] --data-dir <path> [options]
 | `--homi-id <n>` | _(none)_ | Id of the `homi` server holding the device; required for the `aisio` and `opends` backends |
 | `--batch-size <n>` | `1` | Number of files per batch |
 | `--batches <n>` | `1` | Number of batches to read |
+| `--threads <n>` | `1` | Threads that read each batch between them, each with a slice of its files and, for `aisio-cpu` and `aisio-p2p`, its own queue (`aisio-gpu` takes one); more than one needs a `--batch-size` no larger than the dataset |
 | `--iosize <n>` | `4096` | Number of bytes per I/O (`aisio` backends only) |
 | `--queue-depth <n>` | `128` | NVMe queue depth (`aisio` backends only) |
 | `--gpu-nqueues <n>` | `1` | Number of GPU queues (`aisio-gpu` only) |
@@ -113,6 +114,12 @@ filperf [<device-uri>] --data-dir <path> [options]
 | `--copy-to-gpu` | off | Copy each file from host to device memory after reading (`aisio-cpu` and `posix` only) |
 | `--summary` | off | Print I/O and dataset statistics after completion |
 | `--help` | | Print usage |
+
+With more than one thread, the `--summary` prep and IO times of a batch are those of its
+slowest thread, and the time to hand the batch to the threads is in neither; MiB/s and
+IOPS are measured on the wall clock. A process forked after `fil_init()` with more than
+one thread can't use the iterator, as its threads stay in the parent: `fil_next()` fails
+with `ENOTSUP`, so call `fil_init()` in the child.
 
 `posix`, `cufile` and `opends` need no device uri: `opends` reads the device held by the
 `homi` server named by `--homi-id`. `--iosize` and `--queue-depth` do not apply to
